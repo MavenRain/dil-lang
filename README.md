@@ -19,22 +19,50 @@ with the TinyCC JavaScript host kit `hosts/tcc-js`.
 
 ## Files
 
-- `SPEC.md`: the specification. Fill each section.
+- [`SPEC.md`](SPEC.md): the specification. Each rule gives its test.
 - `design/DESIGN.md`: the domain design. It is the only source of the core
   types and the core operations.
 - `docs/PLAN.md`: the rulings, the design choices and the slices.
 - `formers/FORMERS.md`: the type formers. `formers/tcc-js.md` gives their
   status on the tcc-js host.
 - `probe/CAPABILITY.md`: the host probe.
-- `docs/STATUS.md` and `docs/VALIDATION.md`: the status and the gate results.
+- [`docs/STATUS.md`](docs/STATUS.md): each slice, its commit and the open items.
+- [`docs/VALIDATION.md`](docs/VALIDATION.md): the gate commands and their counts.
 - `docs/host/README.md`: how to build and test the host kit, and how to
   replace the sample domain in `domain/`.
 
 ## Status
 
-Slice D0. The repository holds the lang-template tcc-js kit with its sample
-domain, and `make check` and `make doc-check` pass. The dil-lang domain
-replaces the sample domain from slice D1. Slice D3 adds app programs (the section below). `docs/PLAN.md` gives the slices.
+Slices D0 to D6 are complete. [`docs/STATUS.md`](docs/STATUS.md) gives each
+slice and its commit. [`docs/VALIDATION.md`](docs/VALIDATION.md) gives the
+gate results.
+
+## Commands
+
+    langc check PROG [--partial]
+    langc eval PROG NAME [ARGS...]
+    langc build PROG [--partial] [-o OUT]
+    langc build PROG [--partial] [--js OUT.js [--selftest]] [--json OUT.json]
+
+- `check` checks the type of each definition and proves each equality
+  definition.
+- `eval` evaluates the definition NAME with the arguments ARGS and prints
+  the value. A Nat entry overflow prints `trap`, reports `EVAL_OVERFLOW`
+  on stderr and exits 0.
+- `build` writes the output files. `-o OUT` writes the JSON document to OUT.
+- `--js OUT.js` writes the ES module. `--json OUT.json` writes the JSON
+  document. The two files must be different.
+- `--selftest` adds JS checks for definitions whose type is `Eq A a b`
+  and whose carrier has no function or type inside. It evaluates both sides
+  and stops with an error when they differ. Other carriers are skipped with
+  a comment; parameterized proof functions are checked only by the compiler.
+  It needs `--js`.
+- `--partial` reads a program that the end of the file cuts (section
+  Partial programs). `check` and `build` take it. `eval` does not.
+
+The exit status is 0 when the command succeeds, 1 when the program is
+refused, and 2 for a usage or file error. A refused build writes no file.
+`make check`, `make check-clang` and `make doc-check` are the gate.
 
 ## App programs
 
