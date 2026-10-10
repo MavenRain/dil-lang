@@ -1,10 +1,8 @@
 # dil-lang status
 
 The build implements slices K0 to K3 (the kit `hosts/tcc-js` in
-lang-template) and slices D0 to D6 (this repository). The D series is
-complete. Section Open gives the design calls that the maintainer has not
-ruled and the items that are not built. `SPEC.md` gives each rule and its
-test.
+lang-template) and slices D0 to D6 and E1 (this repository). Section Open
+gives each open item and its ruling. `SPEC.md` gives each rule and its test.
 
 ## Slices
 
@@ -21,35 +19,37 @@ test.
 | D3 | App programs (`app`, `init`, `events`), the manifest, and the JS interface `init`, `view` and `step` | `1f0ab42` |
 | D4 | `recover` and `isolate`, with isolation in `interpolate`, `component` and `byState` | `eb8fc1d` |
 | D5 | `--partial` on `check` and `build` | `019afee` |
-| D6 | `SPEC.md`, this file, `docs/VALIDATION.md`, `README.md` and the final gate | the D6 commit |
+| D6 | `SPEC.md`, this file, `docs/VALIDATION.md`, `README.md` and the final gate | `52192e3` |
+| E1 | The isolate step law and the app example `examples/guard.lang`, with `test/json/guard.json` and 5 rows in `test/eval/expect.txt` | the E1 commit |
 
 ## Open
 
-Design calls that the maintainer has not ruled:
+The maintainer ruled each item in slice E0 (2026-10-10):
 
 1. Slice D5: the partial-program design calls DC-P1 to DC-P8 and the
-   interpretations I1 to I6 (`SPEC.md`, rules P1 to P9).
+   interpretations I1 to I6 (`SPEC.md`, rules P1 to P9). Ruled: keep as
+   built.
 2. Slice D4: the design calls DC1 to DC5, direct or inherited isolation, and
-   the rewrites of 10 laws.
-3. Slices D2 and D3: six design calls each.
-
-Items that are not built:
-
-4. A reduction `recover A d d = d` in the checker.
+   the rewrites of 10 laws. Ruled: keep as built.
+3. Slices D2 and D3: six design calls each. Ruled: keep as built.
+4. A reduction `recover A d d = d` in the checker. Dropped (section Known
+   limits).
 5. A definition for the law "isolate keeps a trap-free closed meaning".
-   `isolateUnit` and `isolateAgain` test the view only.
+   Closed by slice E1: `examples/guard.lang` tests the view and the step.
 6. A test of P8 on more than one program, and a test of the type-definition
-   case (`SPEC.md`, O2).
-7. The D4 app example is `test/app/recovery.lang` under the Node harness.
-   It is not an example with a JSON golden and `expect.txt` rows.
+   case (`SPEC.md`, O2). Dropped (section Known limits).
+7. An app example for slice D4 with a JSON golden and `expect.txt` rows.
+   Closed by slice E1: `examples/guard.lang` and `test/json/guard.json`.
 8. From the kit slices: the shared front files of K2, JS fuel, JS parity,
-   linked cells, `test/regressions.js` line 62, `src/json.c` line 1, and the
-   root `make check` for the mech host.
-9. From slice D0: `test/backend-regressions.c` writes under `/tmp`;
-   `.gitignore` lists `build/` two times; the probe gaps; the template dash
-   scan and the doc-check skip list.
-10. The D3 commit holds 5 paths that the D3 record does not list.
-11. The repository visibility.
+   linked cells, `test/regressions.js` line 62, `src/json.c` line 1, the
+   root `make check` for the mech host, the template dash scan and the
+   doc-check skip list. Deferred to a lang-template kit series.
+9. From slice D0: `test/backend-regressions.c` writes under `/tmp`.
+   Slice E2 addresses this item. `.gitignore` already lists `build/` once.
+   The probe gaps are recorded only.
+10. The D3 commit holds 5 paths that the D3 record does not list. Recorded
+    only.
+11. The repository visibility. The maintainer changes it to public.
 
 Closed by commit 019afee: `check --partial` now has a test
 (`partial_prefix_tests` in `test/backend-regressions.c`).
@@ -66,6 +66,9 @@ Closed by commit 019afee: `check --partial` now has a test
 - With `--partial`, only `(` is an open form. A complete type definition can
   change when a longer prefix extends it.
 - The parser has a depth limit (`PARSE_DEPTH`).
+- The checker has no reduction `recover A d d = d` (`SPEC.md`, O3).
+- The test of P8 uses one program, and no test covers the type-definition
+  case (`SPEC.md`, O2).
 - In the sandbox, `build/backend-regressions` exits 2 with no output. Run
   `make check` outside the sandbox.
 

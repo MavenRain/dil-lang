@@ -109,7 +109,9 @@ when its expression succeeds. Siblings outside that node remain present.
 
 Raw meanings and entry functions still report overflows that no `recover`
 or `isolate` handles. The guest proofs in `test/app/recovery.lang` test nested
-recovery, omitted nodes, restored nodes and unchanged states.
+recovery, omitted nodes, restored nodes and unchanged states. The app example
+`examples/guard.lang` has a JSON golden; its manifest tree omits the node
+that traps at init.
 
 ## Partial programs
 

@@ -213,7 +213,7 @@ the JS module:
 | a type, a proof | erased |
 
 `encode(document)` in the module gives the JSON document byte for byte.
-Tests: line `json` of `make check` (16 goldens in `test/json/`) and line `js`
+Tests: line `json` of `make check` (17 goldens in `test/json/`) and line `js`
 (each module runs in Node, and `encode(document)` equals the golden).
 
 ### 7.3 App programs (slice D3)
@@ -234,9 +234,9 @@ Tests: line `json` of `make check` (16 goldens in `test/json/`) and line `js`
 |---|---|---|
 | E1 | `recover A d x` gives `d` when `x` holds a Nat overflow, also in a nested data field. Otherwise it gives `x`. | `test/app/recovery.lang`: `caught`, `clean`, `nested`, `hidden` |
 | E2 | `recover` does not call a function that the value holds. During checking, it stays stuck when a free variable prevents the trap check. | `test/app/recovery.lang`: `neutralFirst`, `neutralLast`, `delayed`, `partial` |
-| E3 | `isolate m` applies `recover` to each view and transition result. A failed view gives `tEnd`. A failed transition gives its input state. | `test/app/recovery.lang`: `isolateUnit`, `isolateAgain`, `viewAt`, `stepAt` |
-| E4 | `interpolate`, `component` and `byState` apply `isolate`. `derive`, `conditional` and `loopOver` get it from `byState`. The siblings of an omitted node stay. | `test/app-regressions.js` rows `an overflowing interpolation omits its node and preserves its sibling`, `an isolated transition overflow preserves the input state` |
-| E5 | An omitted node can come back at a later state when its expression succeeds. | `test/app-regressions.js` row `the omitted interpolation returns after a valid setter event`; `test/app/recovery.lang`: `afterAt`, `treeAfterAt` |
+| E3 | `isolate m` applies `recover` to each view and transition result. A failed view gives `tEnd`. A failed transition gives its input state. When `m` has no trap at a closed state and a closed event, `isolate m` gives the same view and the same step as `m` (closed pointwise). | `test/app/recovery.lang`: `isolateUnit`, `isolateAgain`, `viewAt`, `stepAt`; `examples/guard.lang`: `stepAtInit`, `isolateFieldView`, `isolateFieldStep`, `isolateRawView`, `isolateRawStep` |
+| E4 | `interpolate`, `component` and `byState` apply `isolate`. `derive`, `conditional` and `loopOver` get it from `byState`. The siblings of an omitted node stay. | `test/app-regressions.js` rows `an overflowing interpolation omits its node and preserves its sibling`, `an isolated transition overflow preserves the input state`; `examples/guard.lang`: `viewAtInit`, `countFromInit`; `test/json/guard.json` (the manifest tree has no node for the trap) |
+| E5 | An omitted node can come back at a later state when its expression succeeds. | `test/app-regressions.js` row `the omitted interpolation returns after a valid setter event`; `test/app/recovery.lang`: `afterAt`, `treeAfterAt`; `examples/guard.lang`: `viewAfterSet`, `countAfter` |
 | E6 | A raw meaning and an entry function still report an overflow that no `recover` or `isolate` handles. | `test/app/unisolated.lang`; `test/app-regressions.js` row `an unisolated transition overflow throws RangeError` |
 
 ### 7.5 Partial programs (slice D5)
@@ -250,7 +250,7 @@ Tests: line `json` of `make check` (16 goldens in `test/json/`) and line `js`
 | P5 | After a parse error at the end of the file, `--partial` keeps the complete items. It also keeps the cut item when that item parses with each open `(` closed by a `)`. Only `(` is an open form. | `test/app-regressions.js` rows `a cut inside an open form that closes keeps the item`, `a cut at a definition boundary is its own complete prefix` |
 | P6 | When the kept cut item does not check, `--partial` drops it and checks the other items again. A final application that still needs arguments is also a cut item. Errors in earlier definitions and in completed arguments stay refusals. | `test/app-regressions.js` row `a cut inside an open form that does not check drops the item`; `test/backend-regressions.c`: `partial_application_tests` (19 cases) |
 | P7 | A complete program that ends with a newline gives the same JSON document and the same JS module with and without `--partial`. | `test/app-regressions.js` row `a complete source builds the same with and without --partial` |
-| P8 | The tested prefix chain preserves emitted instances and exported data values, and retains earlier entry names. General monotonicity over all definitions remains open (O2; design, section Partial programs and streaming). | `test/app-regressions.js` row `partial meaning is monotone in the prefix order` |
+| P8 | The tested prefix chain preserves emitted instances and exported data values, and retains earlier entry names. General monotonicity over all definitions is a known limit (O2; design, section Partial programs and streaming). | `test/app-regressions.js` row `partial meaning is monotone in the prefix order` |
 | P9 | `check --partial` does not refuse a byte prefix of a program that checks. | `test/backend-regressions.c`: `partial_prefix_tests` (each byte prefix of `test/app/program.lang`) |
 
 ## 8. Host and target
@@ -269,7 +269,20 @@ the documents. `docs/VALIDATION.md` gives the counts.
 ## 9. Open items
 
 - O1. Rules P1 to P9 come from the design calls of slice D5 and from the
-  changes in commit 019afee. The maintainer has not ruled the design calls.
+  changes in commit 019afee. Ruled: keep as built (E0, 2026-10-10).
+- O5. The isolation design calls of slice D4: direct or inherited
+  isolation, and the rewrites of 10 laws. Ruled: keep as built (E0,
+  2026-10-10).
+- O6. The design calls of slices D2 and D3. Ruled: keep as built (E0,
+  2026-10-10).
+- O7. The JS evaluator has no fuel limit, and full JS parity and linked
+  cells are not built (slice K2). Deferred to a lang-template kit series.
+
+Slice E1 closed O4: `examples/guard.lang` gives the law "isolate keeps a
+trap-free closed meaning" for the view and the step (rule E3).
+
+Known limits. Slice E0 (2026-10-10) dropped these items:
+
 - O2. The test of P8 uses one program (`test/app/program.lang`). A complete
   type definition can change when an arrow or an application extends it.
   For example, appending `-> Nat` after `def Alias : Type 0 := Nat` changes
@@ -277,19 +290,12 @@ the documents. `docs/VALIDATION.md` gives the counts.
   test compares emitted data and entry names, rather than erased types or
   entry behavior. Types erase, so this example leaves runtime data unchanged.
 - O3. The checker has no reduction `recover A d d = d`.
-- O4. The law "isolate keeps a trap-free closed meaning" has no definition.
-  `isolateUnit` and `isolateAgain` test the view only, not the transition.
-- O5. The isolation design calls of slice D4 are not ruled: direct or
-  inherited isolation, and the rewrites of 10 laws.
-- O6. The design calls of slices D2 and D3 are not ruled.
-- O7. The JS evaluator has no fuel limit, and full JS parity and linked
-  cells are not built (slice K2).
 
 ## 10. Milestones
 
 The slices of `docs/PLAN.md` (section 3) replace the milestones M0 to M3.
 `docs/STATUS.md` gives each slice and its commit.
 
-Status 2026-10-10: slices K0 to K3 and D0 to D5 are committed. Slice D6
-(this text, `docs/STATUS.md`, `docs/VALIDATION.md` and `README.md`) is
-staged. The D series is complete.
+Status 2026-10-10: slices K0 to K3 and D0 to D6 are committed. Slice E1
+(`examples/guard.lang`, its golden, its `expect.txt` rows and the documents)
+is staged.

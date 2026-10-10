@@ -1,0 +1,39 @@
+-- An app program with error isolation (slices D4 and E1). The count cell
+-- starts at the Nat maximum, so its interpolation (count + 1) traps at init:
+-- isolate omits that node and keeps its siblings. The set event gives the
+-- cell a small value, and the node comes back with the sum. The bump handler
+-- overflows at init, so its step keeps the input state (V2). Each trap stays
+-- inside isolate, so the build accepts each instance (S3).
+def kCount : Key := key "count"
+def kBump : Key := key "bump"
+def natOf : (v : Value) -> Nat := fun (v : Value) => fold (fun (n : Nat) => n) (fun (f : Flag) => 0) (fun (t : Str) => 0) v
+def count : Expr := cell kCount (vNat 0)
+def next : Expr := lift1 (fun (v : Value) => vNat (natAdd (natOf v) 1)) count
+def bump : Trans := onTarget kBump (fun (e : Event) (s : State) => set kCount (vNat (natAdd (natOf (count s)) 1)) s)
+def fieldOf : (k : Key) -> Meaning := fun (k : Key) => component (name "Field") (cons (pair (name "value") (cell k (vNat 0))) nil) (cons (setter k) nil) omitted
+def buttonOf : (t : Trans) -> Meaning := fun (t : Trans) => component (name "Button") (cons (pair (name "label") (lit (vText "Bump"))) nil) (cons t nil) omitted
+-- A raw meaning: no isolate in its view or its step.
+def rawOf : (t : Trans) -> Meaning := fun (t : Trans) => pair (fun (s : State) => text (showValue (count s)) tEnd) t
+def init : State := cons (pair kCount (vNat 18446744073709551615)) nil
+def events : List Key := cons kCount (cons kBump nil)
+def app : Meaning := besideAll (cons (staticText "Total: ") (cons (interpolate next) (cons (fieldOf kCount) (cons (buttonOf bump) nil))))
+def eSet : Event := event kCount (vNat 2)
+def eBump : Event := event kBump (vNat 0)
+def after : State := transOf app eSet init
+def treeAfter : UITree := viewOf app after
+-- The tree at init omits the failing node and keeps its siblings.
+def viewAtInit : Eq UITree (viewOf app init) (text "Total: " (comp (name "Field") (cons (pair (name "value") (vNat 18446744073709551615)) nil) tEnd (comp (name "Button") (cons (pair (name "label") (vText "Bump")) nil) tEnd tEnd))) := refl
+-- After the set event, the node comes back with the sum.
+def viewAfterSet : Eq UITree treeAfter (text "Total: " (text "3" (comp (name "Field") (cons (pair (name "value") (vNat 2)) nil) tEnd (comp (name "Button") (cons (pair (name "label") (vText "Bump")) nil) tEnd tEnd)))) := refl
+-- The bump step overflows at init, so the state does not change.
+def stepAtInit : Eq State (transOf app eBump init) init := refl
+-- isolate keeps a trap-free closed meaning, for the view and the step (closed
+-- pointwise): the field node of the app at init, and a raw meaning after the
+-- set event.
+def isolateFieldView : Eq UITree (viewOf (isolate (fieldOf kCount)) init) (viewOf (fieldOf kCount) init) := refl
+def isolateFieldStep : Eq State (transOf (isolate (fieldOf kCount)) eSet init) (transOf (fieldOf kCount) eSet init) := refl
+def isolateRawView : Eq UITree (viewOf (isolate (rawOf bump)) after) (viewOf (rawOf bump) after) := refl
+def isolateRawStep : Eq State (transOf (isolate (rawOf bump)) eBump after) (transOf (rawOf bump) eBump after) := refl
+-- Entries: the count cell after n bump events, from the set state and from init.
+def countAfter : (n : Nat) -> Nat := fun (n : Nat) => natOf (getOr kCount (vNat 0) (fold (fun (s : State) => transOf app eBump s) after n))
+def countFromInit : (n : Nat) -> Nat := fun (n : Nat) => natOf (getOr kCount (vNat 0) (fold (fun (s : State) => transOf app eBump s) init n))

@@ -1,8 +1,8 @@
 # Validation
 
 Date: 2026-10-10. TinyCC: 0.9.28rc (mob@0fb54300, AArch64 Darwin). Node:
-23.10.0. Host executable: `build/langc` at commit 019afee. Slice D6 changes
-no source file.
+23.10.0. Host executable: `build/langc` at commit 019afee. Slices D6 and E1
+change no source file.
 
 ## Gate commands
 
@@ -15,14 +15,14 @@ Run each command outside the sandbox. In the sandbox,
 | Line | Count | What the count shows |
 |---|---|---|
 | backend regressions | 174 checked, 0 failed | The C tests in `test/backend-regressions.c` pass. They include the 19 cases of `partial_application_tests` and the byte prefixes of `partial_prefix_tests`. |
-| examples | 16 checked, 0 failed | Each file in `examples/` checks, and each equality definition in it is proved. |
+| examples | 17 checked, 0 failed | Each file in `examples/` checks, and each equality definition in it is proved. |
 | parse refusals | 12 checked | Each row of `test/parse/expect.txt` gives its refusal code. |
 | check refusals | 28 checked | Each row of `test/check/expect.txt` gives its refusal code. |
-| evals | 30 checked | Each row of `test/eval/expect.txt` gives its value or its trap. |
-| json | 16 builds checked | Each example builds a JSON document equal to its golden in `test/json/`. |
+| evals | 35 checked | Each row of `test/eval/expect.txt` gives its value or its trap. |
+| json | 17 builds checked | Each example builds a JSON document equal to its golden in `test/json/`. |
 | build refusals | 8 checked | Each row of `test/emit/expect.txt` gives its refusal code and emits no stdout. A separate `trap.lang` case checks that `-o` leaves no file. |
-| js | 16 modules checked | Each example builds with `--js --selftest`, runs in Node, and `encode(document)` equals its golden. |
-| js evals | 16 checked, 14 not entries | Each eval row whose name is an entry gives the same value in the JS module. 14 rows are not entries. |
+| js | 17 modules checked | Each example builds with `--js --selftest`, runs in Node, and `encode(document)` equals its golden. |
+| js evals | 19 checked, 16 not entries | Each eval row whose name is an entry gives the same value in the JS module. 16 rows are not entries. |
 | js build refusals | 16 checked | The build refusals also hold for the JS output. |
 | gate | 0 failures | `test/gate.sh` has no failure. |
 | regressions | 6 checked, 0 failed | `test/regressions.js`: type safety, type metadata, binder scope and domain declarations. |
@@ -55,3 +55,15 @@ backend regressions from 78 to 174. Strict mode stays the default, so no
 example, golden, `expect.txt` row or refusal changes.
 
 Slice D6 adds the documents. It changes no count.
+
+Slice E1 adds `examples/guard.lang`, an app example for slice D4. Its count
+cell starts at 18446744073709551615, so the interpolation of count + 1 traps
+at init. The proofs show three items: the tree at init omits that node and
+keeps its siblings; the node comes back after a set event; a bump step that
+overflows keeps the state. Four more proofs give the law "isolate keeps a
+trap-free closed meaning" for the view and the step. In
+`test/json/guard.json`, the manifest tree has no node for the trap.
+`test/eval/expect.txt` gets 5 rows, and 3 of them name an entry. The
+examples, json and js lines go from 16 to 17, and the evals from 30 to 35.
+The js evals go from 16 to 19 checked, and from 14 to 16 not entries.
+Slice E1 changes no C file.
