@@ -1113,7 +1113,12 @@ static int resolve_head(Checker *c, const Term *head, Head *h) {
   h->kind = HEAD_TERM;
   if (head->kind != TERM_VAR || find_local(c, head->name) != NULL || find_def(c->m, head->name) != NO_DEF)
     return 1;
-  return find_known(c, head->name, h) ? 1 : unknown_name(c, head->name);
+  if (!find_known(c, head->name, h))
+    return unknown_name(c, head->name);
+  /* natSub stops at 0. JS subtraction does not (ruling 2026-10-09). */
+  if (h->kind == HEAD_BUILTIN && h->builtin->op == OP_NAT_SUB)
+    return FAIL(c, "REFUSE_DESIGN", "natSub is outside the dil-lang design (ruling 2026-10-09); JS subtraction does not stop at 0");
+  return 1;
 }
 
 static uint32_t known_arity(const Checker *c, const Head *h) {

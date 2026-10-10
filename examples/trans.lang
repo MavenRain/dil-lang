@@ -1,0 +1,18 @@
+-- Guest tests of the transitions. They form a monoid under sequential
+-- composition (design line 75). Each proof is refl.
+def kSeats : Key := key "seats"
+def kOpen : Key := key "open"
+def start : State := cons (pair kSeats (vNat 2)) nil
+def bump : Event := event kSeats (vNat 3)
+def flip : Event := event kOpen (vFlag flagYes)
+-- Pointwise laws over each transition, event and state.
+def leftUnitT : (t : Trans) -> (e : Event) -> (s : State) -> Eq State (thenT idT t e s) (t e s) := fun (t : Trans) (e : Event) (s : State) => refl
+def rightUnitT : (t : Trans) -> (e : Event) -> (s : State) -> Eq State (thenT t idT e s) (t e s) := fun (t : Trans) (e : Event) (s : State) => refl
+def assocT : (t u v : Trans) -> (e : Event) -> (s : State) -> Eq State (thenT (thenT t u) v e s) (thenT t (thenT u v) e s) := fun (t u v : Trans) (e : Event) (s : State) => refl
+-- Closed instances of the same laws. The JS selftest runs them.
+def leftUnitAt : Eq State (thenT idT (setT kSeats) bump start) (setT kSeats bump start) := refl
+def rightUnitAt : Eq State (thenT (setT kSeats) idT bump start) (setT kSeats bump start) := refl
+def assocAt : Eq State (thenT (thenT (setT kSeats) (setT kOpen)) (setT kSeats) flip start) (thenT (setT kSeats) (thenT (setT kOpen) (setT kSeats)) flip start) := refl
+def allNil : Eq State (thenAll nil bump start) (idT bump start) := refl
+def allTwo : Eq State (thenAll (cons (setT kSeats) (cons (setT kOpen) nil)) flip start) (thenT (setT kSeats) (setT kOpen) flip start) := refl
+def setWrites : Eq State (setT kSeats bump start) (cons (pair kSeats (vNat 3)) nil) := refl

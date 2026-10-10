@@ -1,19 +1,39 @@
--- Sample domain. Replace it with your design. See domain/README.md.
--- Each family, constructor, field and def name here becomes a core name
--- (rule R4). Only this file can declare a family (rule R1).
-family Color := red | green | blue
-family Item := makeItem (itemColor : Color) (itemPrice : Nat) (itemCount : Nat)
-family Stack := bottom | push (top : Nat) (rest : Stack)
--- An indexed family (former F15): `Lot 3` is a lot of size 3.
-family Lot (size : Nat) := makeLot (lotPrice : Nat)
+-- The dil-lang core types and operations (design/DESIGN.md lines 8 to 11,
+-- 20, 33, 49, 54 and 75). UITree and Prop are not here: the kit refuses the
+-- field List UITree (DOMAIN_FAMILY). Each family, constructor, field and def name here
+-- becomes a core name (rule R4). Only this file can declare a family (rule R1).
+family Key := key (keyName : Str)
+family Name := name (nameText : Str)
+-- A pure value of a state cell.
+family Value := vNat (valNat : Nat) | vFlag (valFlag : Flag) | vText (valText : Str)
+-- An event names its target cell and carries its payload (line 10).
+family Event := event (evTarget : Key) (evPayload : Value)
 
-def lineTotal : (item : Item) -> Nat :=
-  fun (item : Item) => natMul (itemPrice item) (itemCount item)
-def isRed : (color : Color) -> Flag :=
-  fun (color : Color) => fold flagYes flagNo flagNo color
-def total : (items : List Item) -> Nat :=
-  fun (items : List Item) => fold (fun (item : Item) (acc : Nat) => natAdd (lineTotal item) acc) 0 items
-def redTotal : (items : List Item) -> Nat :=
-  fun (items : List Item) => total (filter (fun (item : Item) => isRed (itemColor item)) items)
-def depth : (s : Stack) -> Nat :=
-  fun (s : Stack) => fold 0 (fun (top : Nat) (rest : Nat) => natAdd rest 1) s
+-- A state is a partial map from Key to Value: a list of entries (line 9).
+def State : Type 0 := List (Prod Key Value)
+-- A transition: Event -> State -> State (line 20).
+def Trans : Type 0 := Event -> State -> State
+
+def keyEq : (a : Key) -> (b : Key) -> Flag :=
+  fun (a : Key) (b : Key) => strEq (keyName a) (keyName b)
+-- The value of the first entry of the key, if there is one.
+def lookup : (k : Key) -> (s : State) -> Option Value :=
+  fun (k : Key) (s : State) => fold (fun (p : Prod Key Value) (acc : Option Value) => flagIf (keyEq k (first p)) (some (second p)) acc) none s
+-- The value of the key, or the default d (line 9: totalized with defaults).
+def getOr : (k : Key) -> (d : Value) -> (s : State) -> Value :=
+  fun (k : Key) (d : Value) (s : State) => option d (fun (v : Value) => v) (lookup k s)
+-- s[k := v]: replace the entry of the key, or append it when it is absent.
+def set : (k : Key) -> (v : Value) -> (s : State) -> State :=
+  fun (k : Key) (v : Value) (s : State) => option (fold (fun (p : Prod Key Value) (acc : State) => cons p acc) (cons (pair k v) nil) s) (fun (old : Value) => map (fun (p : Prod Key Value) => flagIf (keyEq k (first p)) (pair k v) p) s) (lookup k s)
+
+-- The identity transition (line 33).
+def idT : Trans := fun (e : Event) (s : State) => s
+-- Sequential composition: thenT t u runs t, then u.
+def thenT : (t : Trans) -> (u : Trans) -> Trans :=
+  fun (t : Trans) (u : Trans) => fun (e : Event) (s : State) => u e (t e s)
+-- The monoidal combination of transitions (lines 49 and 75).
+def thenAll : (ts : List Trans) -> Trans :=
+  fun (ts : List Trans) => fold (fun (t : Trans) (acc : Trans) => thenT t acc) idT ts
+-- The setter of a state cell: s[k := payload(e)] (line 54).
+def setT : (k : Key) -> Trans :=
+  fun (k : Key) => fun (e : Event) (s : State) => set k (evPayload e) s

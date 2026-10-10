@@ -1,0 +1,19 @@
+-- Guest tests of the State and Event operations (slice D1). Each proof is refl.
+def kSeats : Key := key "seats"
+def kName : Key := key "name"
+def kOpen : Key := key "open"
+def empty : State := nil
+def two : State := cons (pair kSeats (vNat 2)) (cons (pair kName (vText "Ada")) nil)
+def keyEqSame : Eq Flag (keyEq kSeats (key "seats")) flagYes := refl
+def keyEqOther : Eq Flag (keyEq kSeats kName) flagNo := refl
+def lookupEmpty : Eq (Option Value) (lookup kSeats empty) none := refl
+def lookupSet : Eq (Option Value) (lookup kOpen (set kOpen (vFlag flagYes) two)) (some (vFlag flagYes)) := refl
+def setPresent : Eq State (set kSeats (vNat 5) two) (cons (pair kSeats (vNat 5)) (cons (pair kName (vText "Ada")) nil)) := refl
+def setAbsent : Eq State (set kOpen (vFlag flagNo) two) (cons (pair kSeats (vNat 2)) (cons (pair kName (vText "Ada")) (cons (pair kOpen (vFlag flagNo)) nil))) := refl
+def setTwice : Eq State (set kSeats (vNat 7) (set kSeats (vNat 5) two)) (set kSeats (vNat 7) two) := refl
+def setTwiceEmpty : Eq State (set kOpen (vNat 7) (set kOpen (vNat 5) empty)) (set kOpen (vNat 7) empty) := refl
+def getOrAbsent : Eq Value (getOr kOpen (vFlag flagNo) two) (vFlag flagNo) := refl
+def getOrPresent : Eq Value (getOr kSeats (vNat 0) two) (vNat 2) := refl
+def ev : Event := event kSeats (vNat 3)
+def evTargetOf : Eq Key (evTarget ev) kSeats := refl
+def evPayloadOf : Eq Value (evPayload ev) (vNat 3) := refl

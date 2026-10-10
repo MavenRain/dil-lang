@@ -25,3 +25,4 @@ bad-eta.lang TYPE_REFL
 str-eq-nat.lang TYPE_MISMATCH
 show-nat-str.lang TYPE_MISMATCH
 str-not-nat.lang TYPE_MISMATCH
+nat-sub.lang REFUSE_DESIGN

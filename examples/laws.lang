@@ -11,8 +11,7 @@ def foldNil : Eq Nat (fold (fun (x : Nat) (acc : Nat) => natAdd x acc) 0 noNats)
 def foldSum : Eq Nat (fold (fun (x : Nat) (acc : Nat) => natAdd x acc) 0 xs) 3 := refl
 def firstPair : Eq Nat (first (pair 3 flagYes)) 3 := refl
 def eitherLeft : Eq Nat (either (fun (n : Nat) => n) (fun (n : Nat) => natAdd n 1) leftFour) 4 := refl
-def subFloor : Eq Nat (natSub 3 5) 0 := refl
 def flagTrue : Eq Nat (flagIf (natLe 2 3) 1 0) 1 := refl
-def lotLaw : Eq Nat (lotPrice (makeLot 3 250)) 250 := refl
+def keyLaw : Eq Str (keyName (key "seats")) "seats" := refl
 def productEta : (p : Prod Nat Nat) -> Eq (Prod Nat Nat) (pair (first p) (second p)) p := fun p => refl
 def sigmaEta : (s : Sigma (n : Nat) (Eq Nat n n)) -> Eq (Sigma (n : Nat) (Eq Nat n n)) (pack (witness s) (payload s)) s := fun s => refl

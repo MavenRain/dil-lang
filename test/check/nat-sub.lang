@@ -1,0 +1,1 @@
+def discount : (a d : Nat) -> Nat := fun (a d : Nat) => natSub a d
