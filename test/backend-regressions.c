@@ -376,7 +376,8 @@ static void partial_prefix_tests(char *source) {
 }
 
 int main(void) {
-  char directory[] = "/tmp/langc-backend-XXXXXX";
+  char cwd[FILENAME_MAX];
+  char directory[FILENAME_MAX];
   char target[FILENAME_MAX];
   char alias[FILENAME_MAX];
   char hard[FILENAME_MAX];
@@ -386,6 +387,9 @@ int main(void) {
   struct stat info;
   FILE *file;
   char contents[16] = {0};
+  if (getcwd(cwd, sizeof cwd) == NULL)
+    return 2;
+  snprintf(directory, sizeof directory, "%s/build/langc-backend-XXXXXX", cwd);
   if (mkdtemp(directory) == NULL)
     return 2;
   snprintf(target, sizeof target, "%s/out", directory);

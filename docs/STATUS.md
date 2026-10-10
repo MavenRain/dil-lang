@@ -1,7 +1,7 @@
 # dil-lang status
 
 The build implements slices K0 to K3 (the kit `hosts/tcc-js` in
-lang-template) and slices D0 to D6 and E1 (this repository). Section Open
+lang-template) and slices D0 to D6, E1 and E2 (this repository). Section Open
 gives each open item and its ruling. `SPEC.md` gives each rule and its test.
 
 ## Slices
@@ -20,7 +20,8 @@ gives each open item and its ruling. `SPEC.md` gives each rule and its test.
 | D4 | `recover` and `isolate`, with isolation in `interpolate`, `component` and `byState` | `eb8fc1d` |
 | D5 | `--partial` on `check` and `build` | `019afee` |
 | D6 | `SPEC.md`, this file, `docs/VALIDATION.md`, `README.md` and the final gate | `52192e3` |
-| E1 | The isolate step law and the app example `examples/guard.lang`, with `test/json/guard.json` and 5 rows in `test/eval/expect.txt` | the E1 commit |
+| E1 | The isolate step law and the app example `examples/guard.lang`, with `test/json/guard.json` and 5 rows in `test/eval/expect.txt` | `451f05e` |
+| E2 | The temporary directory of `test/backend-regressions.c` moves from `/tmp` to `build/`, so `make check` runs in the sandbox | the E2 commit |
 
 ## Open
 
@@ -44,8 +45,9 @@ The maintainer ruled each item in slice E0 (2026-10-10):
    linked cells, `test/regressions.js` line 62, `src/json.c` line 1, the
    root `make check` for the mech host, the template dash scan and the
    doc-check skip list. Deferred to a lang-template kit series.
-9. From slice D0: `test/backend-regressions.c` writes under `/tmp`.
-   Slice E2 addresses this item. `.gitignore` already lists `build/` once.
+9. From slice D0: `test/backend-regressions.c` wrote under `/tmp`. Closed
+   by slice E2: the temporary directory is under `build/`, and `.gitignore`
+   lists `build/` one time.
    The probe gaps are recorded only.
 10. The D3 commit holds 5 paths that the D3 record does not list. Recorded
     only.
@@ -69,8 +71,6 @@ Closed by commit 019afee: `check --partial` now has a test
 - The checker has no reduction `recover A d d = d` (`SPEC.md`, O3).
 - The test of P8 uses one program, and no test covers the type-definition
   case (`SPEC.md`, O2).
-- In the sandbox, `build/backend-regressions` exits 2 with no output. Run
-  `make check` outside the sandbox.
 
 ## Internal boundaries
 

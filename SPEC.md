@@ -296,6 +296,6 @@ Known limits. Slice E0 (2026-10-10) dropped these items:
 The slices of `docs/PLAN.md` (section 3) replace the milestones M0 to M3.
 `docs/STATUS.md` gives each slice and its commit.
 
-Status 2026-10-10: slices K0 to K3 and D0 to D6 are committed. Slice E1
-(`examples/guard.lang`, its golden, its `expect.txt` rows and the documents)
-is staged.
+Status 2026-10-10: slices K0 to K3, D0 to D6 and E1 are committed. Slice E2,
+the last slice, moves the temporary directory of `test/backend-regressions.c`
+under `build/`.

@@ -1,13 +1,15 @@
 # Validation
 
 Date: 2026-10-10. TinyCC: 0.9.28rc (mob@0fb54300, AArch64 Darwin). Node:
-23.10.0. Host executable: `build/langc` at commit 019afee. Slices D6 and E1
-change no source file.
+23.10.0. Host executable: `build/langc` at commit 019afee. Slices D6, E1
+and E2 change no file in `src/`.
 
 ## Gate commands
 
-Run each command outside the sandbox. In the sandbox,
-`build/backend-regressions` exits 2 with no output, and `make check` exits 2.
+Each command runs in the sandbox and outside it. Before slice E2,
+`build/backend-regressions` made its temporary directory under `/tmp`. The
+sandbox refuses writes there, so the program exited 2 with no output, and
+`make check` exited 2.
 
 `make check` exits 0. It builds `build/langc` and
 `build/backend-regressions` with `tcc -Werror`, then gives these lines:
@@ -67,3 +69,14 @@ trap-free closed meaning" for the view and the step. In
 examples, json and js lines go from 16 to 17, and the evals from 30 to 35.
 The js evals go from 16 to 19 checked, and from 14 to 16 not entries.
 Slice E1 changes no C file.
+
+Slice E2 changes one test file, `test/backend-regressions.c`. The program
+makes its temporary directory from `build/langc-backend-XXXXXX` under the
+current directory, as an absolute path. The Makefile runs the program from
+the repository root, so the directory is under `build/`, and the program
+removes it at the end of the run. The path must be absolute: the tests make
+symbolic links to the output path, and the system reads a relative link
+target from the directory of the link. With a relative path, 2 alias tests
+failed. `make check` in the sandbox exited 2 before slice E2 and exits 0
+after it. No count changes. `.gitignore` lists `build/` one time, so slice
+E2 does not change it.
