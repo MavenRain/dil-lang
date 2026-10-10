@@ -17,10 +17,24 @@ to two files:
 dil-lang is made from [lang-template](https://github.com/MavenRain/lang-template)
 with the TinyCC JavaScript host kit `hosts/tcc-js`.
 
+## Files
+
+- `SPEC.md`: the specification. Fill each section.
+- `design/DESIGN.md`: the domain design. It is the only source of the core
+  types and the core operations.
+- `docs/PLAN.md`: the rulings, the design choices and the slices.
+- `formers/FORMERS.md`: the type formers. `formers/tcc-js.md` gives their
+  status on the tcc-js host.
+- `probe/CAPABILITY.md`: the host probe.
+- `docs/STATUS.md` and `docs/VALIDATION.md`: the status and the gate results.
+- `docs/host/README.md`: how to build and test the host kit, and how to
+  replace the sample domain in `domain/`.
+
 ## Status
 
-Planning. The compiler is not in this repository yet. `docs/PLAN.md` gives
-the rulings, the design choices and the slices.
+Slice D0. The repository holds the lang-template tcc-js kit with its sample
+domain, and `make check` and `make doc-check` pass. The dil-lang domain
+replaces the sample domain from slice D1. `docs/PLAN.md` gives the slices.
 
 ## License
 

@@ -1,1 +1,4 @@
 build/
+scratch/
+*.tmp
+__pycache__/
