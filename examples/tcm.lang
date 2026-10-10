@@ -1,0 +1,34 @@
+-- Guest tests of the type-class morphism laws (slice D2, design/DESIGN.md
+-- lines 68 to 75). The monoid laws of thenT are in examples/trans.lang. A
+-- law with parameters is refl for each phrase, state and event; a law that
+-- needs induction over a view tree has closed instances only.
+def kSeats : Key := key "seats"
+def start : State := cons (pair kSeats (vNat 2)) nil
+def bump : Event := event kSeats (vNat 3)
+def natOf : (v : Value) -> Nat := fun (v : Value) => fold (fun (n : Nat) => n) (fun (f : Flag) => 0) (fun (t : Str) => 0) v
+def plus : (a : Value) -> (b : Value) -> Value := fun (a : Value) (b : Value) => vNat (natAdd (natOf a) (natOf b))
+def sliderOf : (k : Key) -> Meaning := fun (k : Key) => component (name "Slider") (cons (pair (name "value") (cell k (vNat 1))) nil) (cons (setter k) nil) omitted
+
+-- Nesting (line 72): mu(c <kids>) = c <mu(kids)>, the kids side by side.
+def nesting : (c : Name) -> (ps : List (Prod Name Expr)) -> (hs : List Trans) -> (a : Meaning) -> (b : Meaning) -> (s : State) -> Eq UITree (viewOf (component c ps hs (beside a b)) s) (comp c (map (fun (p : Prod Name Expr) => pair (first p) (second p s)) ps) (joinTree (viewOf a s) (viewOf b s)) tEnd) := fun (c : Name) (ps : List (Prod Name Expr)) (hs : List Trans) (a : Meaning) (b : Meaning) (s : State) => refl
+def nestingAt : Eq UITree (viewOf (component (name "Card") nil nil (beside (staticText "Seats") (interpolate (cell kSeats (vNat 0))))) start) (comp (name "Card") nil (text "Seats" (text "2" tEnd)) tEnd) := refl
+-- Pure expressions (line 74): the identity morphism on values, lifted
+-- pointwise through the view function.
+def litView : (v : Value) -> (s : State) -> Eq UITree (viewOf (interpolate (lit v)) s) (text (showValue v) tEnd) := fun (v : Value) (s : State) => refl
+def liftId : (x : Expr) -> (s : State) -> Eq Value (lift1 (fun (v : Value) => v) x s) (x s) := fun (x : Expr) (s : State) => refl
+def liftCompose : (f : Value -> Value) -> (g : Value -> Value) -> (x : Expr) -> (s : State) -> Eq Value (lift1 g (lift1 f x) s) (lift1 (fun (v : Value) => g (f v)) x s) := fun (f : Value -> Value) (g : Value -> Value) (x : Expr) (s : State) => refl
+def liftLit : (f : Value -> Value) -> (v : Value) -> (s : State) -> Eq Value (lift1 f (lit v) s) (lit (f v) s) := fun (f : Value -> Value) (v : Value) (s : State) => refl
+def lift2Lit : (f : Value -> Value -> Value) -> (a : Value) -> (b : Value) -> (s : State) -> Eq Value (lift2 f (lit a) (lit b) s) (lit (f a b) s) := fun (f : Value -> Value -> Value) (a : Value) (b : Value) (s : State) => refl
+def liftView : (f : Value -> Value) -> (x : Expr) -> (s : State) -> Eq UITree (viewOf (interpolate (lift1 f x)) s) (text (showValue (f (x s))) tEnd) := fun (f : Value -> Value) (x : Expr) (s : State) => refl
+def liftViewAt : Eq UITree (viewOf (interpolate (lift2 plus (cell kSeats (vNat 0)) (lit (vNat 5)))) start) (text "7" tEnd) := refl
+-- Transitions (line 75): mu keeps the monoid operation and its unit.
+def keepsThen : (a : Meaning) -> (b : Meaning) -> (e : Event) -> (s : State) -> Eq State (transOf (beside a b) e s) (thenT (transOf a) (transOf b) e s) := fun (a : Meaning) (b : Meaning) (e : Event) (s : State) => refl
+def keepsUnit : (e : Event) -> (s : State) -> Eq State (transOf omitted e s) (idT e s) := fun (e : Event) (s : State) => refl
+-- Phrases side by side form a monoid with unit omitted.
+def besideLeftView : (a : Meaning) -> (s : State) -> Eq UITree (viewOf (beside omitted a) s) (viewOf a s) := fun (a : Meaning) (s : State) => refl
+def besideLeftStep : (a : Meaning) -> (e : Event) -> (s : State) -> Eq State (transOf (beside omitted a) e s) (transOf a e s) := fun (a : Meaning) (e : Event) (s : State) => refl
+def besideRightStep : (a : Meaning) -> (e : Event) -> (s : State) -> Eq State (transOf (beside a omitted) e s) (transOf a e s) := fun (a : Meaning) (e : Event) (s : State) => refl
+def besideAssocStep : (a : Meaning) -> (b : Meaning) -> (c : Meaning) -> (e : Event) -> (s : State) -> Eq State (transOf (beside (beside a b) c) e s) (transOf (beside a (beside b c)) e s) := fun (a : Meaning) (b : Meaning) (c : Meaning) (e : Event) (s : State) => refl
+def besideRightAt : Eq UITree (viewOf (beside (sliderOf kSeats) omitted) start) (viewOf (sliderOf kSeats) start) := refl
+def besideAssocAt : Eq UITree (viewOf (beside (beside (staticText "Seats") (interpolate (cell kSeats (vNat 0)))) (sliderOf kSeats)) start) (viewOf (beside (staticText "Seats") (beside (interpolate (cell kSeats (vNat 0))) (sliderOf kSeats))) start) := refl
+def besideStepAt : Eq State (transOf (beside (sliderOf kSeats) (interpolate (cell kSeats (vNat 0)))) bump start) (cons (pair kSeats (vNat 3)) nil) := refl

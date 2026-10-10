@@ -1,6 +1,5 @@
--- The dil-lang core types and operations (design/DESIGN.md lines 8 to 11,
--- 20, 33, 49, 54 and 75). UITree and Prop are not here: the kit refuses the
--- field List UITree (DOMAIN_FAMILY). Each family, constructor, field and def name here
+-- The dil-lang core types and operations (design/DESIGN.md lines 8 to 13,
+-- 20 to 64 and 68 to 75). Each family, constructor, field and def name here
 -- becomes a core name (rule R4). Only this file can declare a family (rule R1).
 family Key := key (keyName : Str)
 family Name := name (nameText : Str)
@@ -37,3 +36,75 @@ def thenAll : (ts : List Trans) -> Trans :=
 -- The setter of a state cell: s[k := payload(e)] (line 54).
 def setT : (k : Key) -> Trans :=
   fun (k : Key) => fun (e : Event) (s : State) => set k (evPayload e) s
+
+-- A view tree (line 13): text, or a component with its props and kids. The
+-- kit refuses a List UITree field (DOMAIN_FAMILY) and mutual families
+-- (REFUSE_REC, rule R3), so each node also holds its next sibling: a UITree
+-- value is a list of sibling nodes, and tEnd ends it (USER ruling 2026-10-09).
+-- The props of a node are pure values; handlers stay out of the view (line 62).
+family UITree := tEnd | text (txt : Str) (txtNext : UITree) | comp (compName : Name) (compProps : List (Prod Name Value)) (compKids : UITree) (compNext : UITree)
+-- The nodes of a, then the nodes of b. The fold keeps a copy of each subtree
+-- beside its result, so a comp node keeps its own kids.
+def joinTree : (a : UITree) -> (b : UITree) -> UITree :=
+  fun (a : UITree) (b : UITree) => second (fold (pair tEnd b) (fun (t : Str) (r : Prod UITree UITree) => pair (text t (first r)) (text t (second r))) (fun (c : Name) (ps : List (Prod Name Value)) (k : Prod UITree UITree) (r : Prod UITree UITree) => pair (comp c ps (first k) (first r)) (comp c ps (first k) (second r))) a)
+
+-- The meaning of a pure expression: eval(e, s) (line 39).
+def Expr : Type 0 := State -> Value
+-- A constant: the identity morphism on values (line 74).
+def lit : (v : Value) -> Expr := fun (v : Value) => fun (s : State) => v
+-- A state cell, or the default d when the cell is absent (line 9).
+def cell : (k : Key) -> (d : Value) -> Expr := fun (k : Key) (d : Value) => fun (s : State) => getOr k d s
+-- Pure functions lift pointwise through the state (line 74).
+def lift1 : (f : Value -> Value) -> (x : Expr) -> Expr := fun (f : Value -> Value) (x : Expr) => fun (s : State) => f (x s)
+def lift2 : (f : Value -> Value -> Value) -> (x : Expr) -> (y : Expr) -> Expr :=
+  fun (f : Value -> Value -> Value) (x : Expr) (y : Expr) => fun (s : State) => f (x s) (y s)
+-- The text of a value in a view.
+def showValue : (v : Value) -> Str :=
+  fun (v : Value) => fold (fun (n : Nat) => showNat n) (fun (f : Flag) => flagIf f "true" "false") (fun (t : Str) => t) v
+
+-- The meaning of a phrase: a view function and a transition (line 20).
+def Meaning : Type 0 := Prod (State -> UITree) Trans
+def viewOf : (m : Meaning) -> (s : State) -> UITree := fun (m : Meaning) (s : State) => first m s
+def transOf : (m : Meaning) -> Trans := fun (m : Meaning) => second m
+-- Static text: a constant view and the identity transition (line 33).
+def staticText : (t : Str) -> Meaning := fun (t : Str) => pair (fun (s : State) => text t tEnd) idT
+-- Interpolation {e}: the view shows eval(e, s); the identity transition (line 39).
+def interpolate : (x : Expr) -> Meaning := fun (x : Expr) => pair (fun (s : State) => text (showValue (x s)) tEnd) idT
+-- The omitted node (line 80): no nodes and the identity transition. It is
+-- the unit of beside.
+def omitted : Meaning := pair (fun (s : State) => tEnd) idT
+-- Siblings in order: the views side by side, the transitions in sequence
+-- (lines 49 and 75).
+def beside : (a : Meaning) -> (b : Meaning) -> Meaning :=
+  fun (a : Meaning) (b : Meaning) => pair (fun (s : State) => joinTree (viewOf a s) (viewOf b s)) (thenT (transOf a) (transOf b))
+def besideAll : (ms : List Meaning) -> Meaning :=
+  fun (ms : List Meaning) => fold (fun (m : Meaning) (acc : Meaning) => beside m acc) omitted ms
+-- A component tag <C p_i = e_i> kids </C> (line 46): each prop is evaluated
+-- in the state, the kids are the view of kids, and the transition runs the
+-- handlers hs, then the transition of kids.
+def component : (c : Name) -> (ps : List (Prod Name Expr)) -> (hs : List Trans) -> (kids : Meaning) -> Meaning :=
+  fun (c : Name) (ps : List (Prod Name Expr)) (hs : List Trans) (kids : Meaning) => pair (fun (s : State) => comp c (map (fun (p : Prod Name Expr) => pair (first p) (second p s)) ps) (viewOf kids s) tEnd) (thenT (thenAll hs) (transOf kids))
+-- t runs only on an event whose target is k (line 10).
+def onTarget : (k : Key) -> (t : Trans) -> Trans :=
+  fun (k : Key) (t : Trans) => fun (e : Event) (s : State) => flagIf (keyEq k (evTarget e)) (t e s) s
+-- The setter of a cell as an event handler (lines 54 and 61).
+def setter : (k : Key) -> Trans := fun (k : Key) => onTarget k (setT k)
+-- The state with a fresh cell: k := v unless k has a value.
+def initCell : (k : Key) -> (v : Value) -> (s : State) -> State :=
+  fun (k : Key) (v : Value) (s : State) => option (set k v s) (fun (old : Value) => s) (lookup k s)
+-- A state declaration (line 51): the remainder runs in the extended state.
+def useState : (k : Key) -> (v : Value) -> (rest : Meaning) -> Meaning :=
+  fun (k : Key) (v : Value) (rest : Meaning) => pair (fun (s : State) => viewOf rest (initCell k v s)) (fun (e : Event) (s : State) => transOf rest e (initCell k v s))
+-- A meaning chosen by the current state.
+def byState : (f : State -> Meaning) -> Meaning :=
+  fun (f : State -> Meaning) => pair (fun (s : State) => viewOf (f s) s) (fun (e : Event) (s : State) => transOf (f s) e s)
+-- A derived binding (line 56): a pure function of the current state.
+def derive : (x : Expr) -> (body : Value -> Meaning) -> Meaning :=
+  fun (x : Expr) (body : Value -> Meaning) => byState (fun (s : State) => body (x s))
+-- A conditional (line 59): the meaning of the selected branch.
+def conditional : (c : State -> Flag) -> (a : Meaning) -> (b : Meaning) -> Meaning :=
+  fun (c : State -> Flag) (a : Meaning) (b : Meaning) => byState (fun (s : State) => flagIf (c s) a b)
+-- A loop (line 59): the meanings of the body under the successive bindings,
+-- side by side.
+def loopOver : (xs : State -> List Value) -> (body : Value -> Meaning) -> Meaning :=
+  fun (xs : State -> List Value) (body : Value -> Meaning) => byState (fun (s : State) => besideAll (map body (xs s)))
