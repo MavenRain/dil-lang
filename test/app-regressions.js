@@ -83,10 +83,27 @@ async function main() {
       assert.equal(m.view(state).compKids.txt, s);
     }
   });
-  const seats = (await build('examples/seats.lang', 'seats')).m;
-  test('a transition overflow throws RangeError', () => {
-    const state = [{first: key('seats'), second: {tag: 'vNat', valNat: (1n << 64n) - 1n}}];
-    assert.throws(() => seats.step(event('more', {tag: 'vNat', valNat: 0n}), state), RangeError);
+  const recovery = await build('test/app/recovery.lang', 'recovery');
+  const recoveryInit = structuredClone(recovery.m.init);
+  const recoveredInstance = name => host(recovery.doc.instances.find(i => i.name === name).value);
+  test('an overflowing interpolation omits its node and preserves its sibling', () => {
+    assert.equal(recovery.m.encode(recovery.m.document), recovery.text);
+    assert.deepEqual(recovery.m.view(recovery.m.init), recovery.doc.tree);
+    assert.deepEqual(recovery.m.view(recovery.m.init), {tag: 'comp', compName: {nameText: 'Button'}, compProps: [], compKids: {tag: 'text', txt: 'keep', txtNext: {tag: 'tEnd'}}, compNext: {tag: 'tEnd'}});
+  });
+  test('an isolated transition overflow preserves the input state', () => {
+    assert.deepEqual(recovery.m.step(recoveredInstance('eMore'), recovery.m.init), recoveryInit);
+    assert.deepEqual(recovery.m.init, recoveryInit);
+  });
+  test('the omitted interpolation returns after a valid setter event', () => {
+    const state = recovery.m.step(recoveredInstance('eSet'), recovery.m.init);
+    assert.deepEqual(state, recoveredInstance('after'));
+    assert.deepEqual(recovery.m.view(state), recoveredInstance('treeAfter'));
+    assert.deepEqual(recovery.m.init, recoveryInit);
+  });
+  const raw = (await build('test/app/unisolated.lang', 'unisolated')).m;
+  test('an unisolated transition overflow throws RangeError', () => {
+    assert.throws(() => raw.step(event('more', {tag: 'vNat', valNat: 0n}), raw.init), RangeError);
   });
 }
 

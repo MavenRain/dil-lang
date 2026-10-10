@@ -158,6 +158,21 @@ static const char *const RUNTIME[] = {
   "const trans = (d, e) => (d === TRAP || e === TRAP ? TRAP : REFL);",
   "const cong = (f, e) => (e === TRAP ? TRAP : REFL);",
   "const transport = (p, e, u) => (e === TRAP ? TRAP : u);",
+  "// recover a d x: d when x holds TRAP at any depth, else x. A function or a",
+  "// type (null) holds nothing. seen visits a shared value once.",
+  "const recover = (a, d, x) => {",
+  "  const seen = new Set();",
+  "  const todo = [x];",
+  "  while (todo.length > 0) {",
+  "    const v = todo.pop();",
+  "    if (v === TRAP) return d;",
+  "    if (v !== null && typeof v === 'object' && !seen.has(v)) {",
+  "      seen.add(v);",
+  "      todo.push(...Object.values(v));",
+  "    }",
+  "  }",
+  "  return x;",
+  "};",
   "// encode: the JSON text of a value, the same bytes as `langc build --json`.",
   "const quote = (s) => {",
   "  let out = '\"';",
@@ -495,6 +510,9 @@ static Shape op_shape(Op op, const char **name) {
     return JS_CALL;
   case OP_SHOW_NAT:
     *name = "showNat";
+    return JS_CALL;
+  case OP_RECOVER:
+    *name = "recover";
     return JS_CALL;
   case OP_PROJ:
     *name = "proj";
@@ -848,6 +866,7 @@ static int op_comparable(Machine *m, const Value *t, uint32_t depth) {
   case OP_FLAG_IF:
   case OP_STR_EQ:
   case OP_SHOW_NAT:
+  case OP_RECOVER:
   case OP_PROJ:
     return 0;
   }

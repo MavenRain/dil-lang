@@ -68,11 +68,18 @@ def viewOf : (m : Meaning) -> (s : State) -> UITree := fun (m : Meaning) (s : St
 def transOf : (m : Meaning) -> Trans := fun (m : Meaning) => second m
 -- Static text: a constant view and the identity transition (line 33).
 def staticText : (t : Str) -> Meaning := fun (t : Str) => pair (fun (s : State) => text t tEnd) idT
--- Interpolation {e}: the view shows eval(e, s); the identity transition (line 39).
-def interpolate : (x : Expr) -> Meaning := fun (x : Expr) => pair (fun (s : State) => text (showValue (x s)) tEnd) idT
 -- The omitted node (line 80): no nodes and the identity transition. It is
 -- the unit of beside.
 def omitted : Meaning := pair (fun (s : State) => tEnd) idT
+-- Error isolation (line 80, rule R6): a failed sub-expression denotes the
+-- omitted node. Pointwise (rule V2): the view at s is tEnd when it holds a
+-- trap, and the step at (e, s) is s when it holds a trap. interpolate,
+-- component and byState apply it; derive, conditional and loopOver get it
+-- from byState.
+def isolate : (m : Meaning) -> Meaning :=
+  fun (m : Meaning) => pair (fun (s : State) => recover UITree tEnd (viewOf m s)) (fun (e : Event) (s : State) => recover State s (transOf m e s))
+-- Interpolation {e}: the view shows eval(e, s); the identity transition (line 39).
+def interpolate : (x : Expr) -> Meaning := fun (x : Expr) => isolate (pair (fun (s : State) => text (showValue (x s)) tEnd) idT)
 -- Siblings in order: the views side by side, the transitions in sequence
 -- (lines 49 and 75).
 def beside : (a : Meaning) -> (b : Meaning) -> Meaning :=
@@ -83,7 +90,7 @@ def besideAll : (ms : List Meaning) -> Meaning :=
 -- in the state, the kids are the view of kids, and the transition runs the
 -- handlers hs, then the transition of kids.
 def component : (c : Name) -> (ps : List (Prod Name Expr)) -> (hs : List Trans) -> (kids : Meaning) -> Meaning :=
-  fun (c : Name) (ps : List (Prod Name Expr)) (hs : List Trans) (kids : Meaning) => pair (fun (s : State) => comp c (map (fun (p : Prod Name Expr) => pair (first p) (second p s)) ps) (viewOf kids s) tEnd) (thenT (thenAll hs) (transOf kids))
+  fun (c : Name) (ps : List (Prod Name Expr)) (hs : List Trans) (kids : Meaning) => isolate (pair (fun (s : State) => comp c (map (fun (p : Prod Name Expr) => pair (first p) (second p s)) ps) (viewOf kids s) tEnd) (thenT (thenAll hs) (transOf kids)))
 -- t runs only on an event whose target is k (line 10).
 def onTarget : (k : Key) -> (t : Trans) -> Trans :=
   fun (k : Key) (t : Trans) => fun (e : Event) (s : State) => flagIf (keyEq k (evTarget e)) (t e s) s
@@ -97,7 +104,7 @@ def useState : (k : Key) -> (v : Value) -> (rest : Meaning) -> Meaning :=
   fun (k : Key) (v : Value) (rest : Meaning) => pair (fun (s : State) => viewOf rest (initCell k v s)) (fun (e : Event) (s : State) => transOf rest e (initCell k v s))
 -- A meaning chosen by the current state.
 def byState : (f : State -> Meaning) -> Meaning :=
-  fun (f : State -> Meaning) => pair (fun (s : State) => viewOf (f s) s) (fun (e : Event) (s : State) => transOf (f s) e s)
+  fun (f : State -> Meaning) => isolate (pair (fun (s : State) => viewOf (f s) s) (fun (e : Event) (s : State) => transOf (f s) e s))
 -- A derived binding (line 56): a pure function of the current state.
 def derive : (x : Expr) -> (body : Value -> Meaning) -> Meaning :=
   fun (x : Expr) (body : Value -> Meaning) => byState (fun (s : State) => body (x s))

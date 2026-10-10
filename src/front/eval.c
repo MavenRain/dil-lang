@@ -22,7 +22,7 @@ static const char *const OP_NAMES[] = {
   [OP_SYMM] = "symm", [OP_TRANS] = "trans", [OP_TRANSPORT] = "transport",
   [OP_CONG] = "cong", [OP_NAT_ADD] = "natAdd", [OP_NAT_SUB] = "natSub",
   [OP_NAT_MUL] = "natMul", [OP_NAT_EQ] = "natEq", [OP_NAT_LE] = "natLe",
-  [OP_STR_EQ] = "strEq", [OP_SHOW_NAT] = "showNat",
+  [OP_STR_EQ] = "strEq", [OP_SHOW_NAT] = "showNat", [OP_RECOVER] = "recover",
   [OP_FLAG_IF] = "flagIf", [OP_PROJ] = "?"
 };
 
@@ -40,7 +40,7 @@ static const unsigned char OP_ARITY[] = {
   [OP_PAYLOAD] = 1, [OP_SYMM] = 1, [OP_TRANS] = 2, [OP_TRANSPORT] = 3,
   [OP_CONG] = 2, [OP_NAT_ADD] = 2, [OP_NAT_SUB] = 2, [OP_NAT_MUL] = 2,
   [OP_NAT_EQ] = 2, [OP_NAT_LE] = 2, [OP_FLAG_IF] = 3, [OP_STR_EQ] = 2,
-  [OP_SHOW_NAT] = 1, [OP_PROJ] = 1
+  [OP_SHOW_NAT] = 1, [OP_RECOVER] = 3, [OP_PROJ] = 1
 };
 
 typedef enum {
@@ -792,6 +792,67 @@ static const Value *show_nat(Machine *m, const Value *const *a, uint32_t n) {
   return val_str(m, bytes, len);
 }
 
+/* What a value holds at any depth. A trap wins over a neutral. */
+typedef enum {
+  HOLDS_NOTHING,
+  HOLDS_NEUTRAL,
+  HOLDS_TRAP
+} Holds;
+
+/* Sets *FOUND to what V holds: a trap, else a neutral. A function or a type
+   holds nothing (recover never applies it), and the arguments of a neutral
+   are not read. The walk loops on the last argument (a list tail, a next
+   sibling) and recurses on the others, so a long list costs no depth. Each
+   node costs one step of fuel. 0 after a diagnostic. */
+static int holds(Machine *m, const Value *v, Holds *found) {
+  uint32_t i;
+  int ok;
+  int more;
+  if (!enter(m))
+    return 0;
+  ok = 1;
+  more = 1;
+  while (more) {
+    ok = spend(m, 1);
+    switch (scrut_of(v)) {
+    case SCRUT_TRAP:
+      *found = HOLDS_TRAP;
+      break;
+    case SCRUT_NEUTRAL:
+      *found = HOLDS_NEUTRAL;
+      break;
+    case SCRUT_VALUE:
+      break;
+    }
+    more = ok && *found != HOLDS_TRAP && v->kind == VAL_OP && v->argc > 0;
+    for (i = 0; more && i + 1u < v->argc; i++) {
+      ok = holds(m, v->args[i], found);
+      more = ok && *found != HOLDS_TRAP;
+    }
+    if (more)
+      v = v->args[v->argc - 1u];
+  }
+  m->depth--;
+  return ok;
+}
+
+/* recover A d x (D4, design line 80): d when x holds a trap at any depth,
+   the stuck operation when x holds a neutral, else x. */
+static const Value *recover(Machine *m, const Value *const *a, uint32_t n) {
+  Holds found = HOLDS_NOTHING;
+  if (!holds(m, a[2], &found))
+    return NULL;
+  switch (found) {
+  case HOLDS_TRAP:
+    return a[1];
+  case HOLDS_NEUTRAL:
+    return val_op(m, VAL_STUCK, OP_RECOVER, 0, 0, a, n);
+  case HOLDS_NOTHING:
+    break;
+  }
+  return a[2];
+}
+
 static const Value *reduce_flag_if(Machine *m, const Value *const *a, uint32_t n) {
   const Value *out;
   if (blocked(m, a[0], OP_FLAG_IF, 0, 0, a, n, &out))
@@ -914,6 +975,8 @@ static const Value *reduce_op(Machine *m, Op op, uint32_t inst, uint32_t field, 
     return str_eq(m, a, n);
   case OP_SHOW_NAT:
     return show_nat(m, a, n);
+  case OP_RECOVER:
+    return recover(m, a, n);
   case OP_PROJ:
     return reduce_proj(m, inst, field, a, n);
   }

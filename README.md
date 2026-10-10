@@ -62,9 +62,26 @@ array, and a family value an object as `encode` writes it (a Value is
 `{ tag: 'vNat', valNat: 2n }`, a Key is
 `{ keyName: 'seats' }`, an Event is `{ evTarget, evPayload }`). `view` gives
 the tree of a state and `step` the next state; a wrong argument throws a
-TypeError and a Nat overflow a RangeError. `document` carries the same
+TypeError and an unhandled Nat overflow a RangeError. `document` carries the same
 manifest, so `encode(document)` is the C document byte for byte. The example
 is `examples/seats.lang`.
+
+## Error isolation
+
+`recover A default value` returns `default` when `value` contains a Nat
+overflow, including one in a nested data field. Otherwise it returns the
+value. It does not call functions stored in the value. During checking, it
+stays stuck when a free variable prevents the trap check.
+
+`isolate meaning` applies recovery to each view and transition result. A
+failed view gives `tEnd`. A failed transition returns its input state.
+`interpolate`, `component`, `derive`, `conditional`, `loopOver` and `byState`
+apply isolation automatically. An omitted node can return at a later state
+when its expression succeeds. Siblings outside that node remain present.
+
+Raw meanings and entry functions still report overflows that no `recover`
+or `isolate` handles. The guest proofs in `test/app/recovery.lang` test nested
+recovery, omitted nodes, restored nodes and unchanged states.
 
 ## License
 

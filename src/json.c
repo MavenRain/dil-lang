@@ -272,6 +272,7 @@ static int op_json(Out *o, const Value *type, const Value *v) {
   case OP_FLAG_IF:
   case OP_STR_EQ:
   case OP_SHOW_NAT:
+  case OP_RECOVER:
   case OP_PROJ:
     return internal(o, "a type that is not a type former");
   }

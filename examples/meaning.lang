@@ -1,6 +1,8 @@
 -- Guest tests of the meaning operations (slice D2), one group for each rule
 -- of design/DESIGN.md lines 31 to 62. A test with parameters holds for each
 -- phrase, state and event (refl); a closed instance also runs in the JS selftest.
+-- Slice D4: interpolate, component and byState isolate their node (recover),
+-- and recover is stuck on a free state, so their laws are closed instances.
 def kSeats : Key := key "seats"
 def kOpen : Key := key "open"
 def start : State := cons (pair kSeats (vNat 2)) nil
@@ -19,13 +21,13 @@ def textView : (t : Str) -> (s : State) -> Eq UITree (viewOf (staticText t) s) (
 def textStep : (t : Str) -> (e : Event) -> (s : State) -> Eq State (transOf (staticText t) e s) s := fun (t : Str) (e : Event) (s : State) => refl
 def textAt : Eq UITree (viewOf (staticText "Seats") start) (text "Seats" tEnd) := refl
 -- Interpolation (line 39): the view shows eval(e, s); the identity transition.
-def interpView : (x : Expr) -> (s : State) -> Eq UITree (viewOf (interpolate x) s) (text (showValue (x s)) tEnd) := fun (x : Expr) (s : State) => refl
-def interpStep : (x : Expr) -> (e : Event) -> (s : State) -> Eq State (transOf (interpolate x) e s) s := fun (x : Expr) (e : Event) (s : State) => refl
+def interpView : Eq UITree (viewOf (interpolate price) start) (text (showValue (price start)) tEnd) := refl
+def interpStep : Eq State (transOf (interpolate price) bump start) start := refl
 def interpAt : Eq UITree (viewOf (interpolate price) start) (text "58" tEnd) := refl
 -- Component tag (line 46): props and kids pointwise; the handlers, then the
 -- transition of the kids.
-def tagView : (c : Name) -> (ps : List (Prod Name Expr)) -> (hs : List Trans) -> (kids : Meaning) -> (s : State) -> Eq UITree (viewOf (component c ps hs kids) s) (comp c (map (fun (p : Prod Name Expr) => pair (first p) (second p s)) ps) (viewOf kids s) tEnd) := fun (c : Name) (ps : List (Prod Name Expr)) (hs : List Trans) (kids : Meaning) (s : State) => refl
-def tagStep : (c : Name) -> (ps : List (Prod Name Expr)) -> (hs : List Trans) -> (kids : Meaning) -> (e : Event) -> (s : State) -> Eq State (transOf (component c ps hs kids) e s) (thenT (thenAll hs) (transOf kids) e s) := fun (c : Name) (ps : List (Prod Name Expr)) (hs : List Trans) (kids : Meaning) (e : Event) (s : State) => refl
+def tagView : Eq UITree (viewOf (component (name "Card") (cons (pair (name "n") price) nil) (cons (setter kSeats) nil) (sliderOf kOpen)) start) (comp (name "Card") (map (fun (p : Prod Name Expr) => pair (first p) (second p start)) (cons (pair (name "n") price) nil)) (viewOf (sliderOf kOpen) start) tEnd) := refl
+def tagStep : Eq State (transOf (component (name "Card") (cons (pair (name "n") price) nil) (cons (setter kSeats) nil) (sliderOf kOpen)) bump start) (thenT (thenAll (cons (setter kSeats) nil)) (transOf (sliderOf kOpen)) bump start) := refl
 def tagAt : Eq UITree (viewOf (sliderOf kSeats) start) (comp (name "Slider") (cons (pair (name "value") (vNat 2)) nil) tEnd tEnd) := refl
 def tagStepAt : Eq State (transOf (sliderOf kSeats) bump start) (cons (pair kSeats (vNat 3)) nil) := refl
 -- State declaration (line 51): the remainder runs in the extended state, and
@@ -36,11 +38,11 @@ def declStep : Eq State (transOf (useState kOpen (vFlag flagNo) (sliderOf kSeats
 def setterHit : Eq State (setter kSeats bump start) (cons (pair kSeats (vNat 3)) nil) := refl
 def setterMiss : Eq State (setter kSeats flip start) start := refl
 -- A derived binding (line 56) is a pure function of the current state.
-def deriveView : (x : Expr) -> (body : Value -> Meaning) -> (s : State) -> Eq UITree (viewOf (derive x body) s) (viewOf (body (x s)) s) := fun (x : Expr) (body : Value -> Meaning) (s : State) => refl
+def deriveView : Eq UITree (viewOf (derive price (fun (v : Value) => staticText (showValue v))) start) (viewOf ((fun (v : Value) => staticText (showValue v)) (price start)) start) := refl
 def deriveAt : Eq UITree (viewOf (derive price (fun (v : Value) => staticText (showValue v))) start) (text "58" tEnd) := refl
 -- Conditionals and loops (line 59): the selected branch; the body under each binding.
-def condYes : (a : Meaning) -> (b : Meaning) -> (s : State) -> Eq UITree (viewOf (conditional (fun (u : State) => flagYes) a b) s) (viewOf a s) := fun (a : Meaning) (b : Meaning) (s : State) => refl
-def condNoStep : (a : Meaning) -> (b : Meaning) -> (e : Event) -> (s : State) -> Eq State (transOf (conditional (fun (u : State) => flagNo) a b) e s) (transOf b e s) := fun (a : Meaning) (b : Meaning) (e : Event) (s : State) => refl
+def condYes : Eq UITree (viewOf (conditional (fun (u : State) => flagYes) (interpolate price) (staticText "closed")) start) (viewOf (interpolate price) start) := refl
+def condNoStep : Eq State (transOf (conditional (fun (u : State) => flagNo) (staticText "open") (sliderOf kSeats)) bump start) (transOf (sliderOf kSeats) bump start) := refl
 def condAt : Eq UITree (viewOf (conditional isOpen (staticText "open") (staticText "closed")) start) (text "closed" tEnd) := refl
 def loopNone : (body : Value -> Meaning) -> (s : State) -> Eq UITree (viewOf (loopOver (fun (u : State) => nil) body) s) tEnd := fun (body : Value -> Meaning) (s : State) => refl
 def loopView : Eq UITree (viewOf (loopOver rows (fun (v : Value) => interpolate (lit v))) start) (text "1" (text "a" tEnd)) := refl

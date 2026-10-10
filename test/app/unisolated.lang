@@ -1,0 +1,4 @@
+-- A raw Meaning leaves its transition unisolated, so step still reports overflow.
+def init : State := nil
+def events : List Key := cons (key "more") nil
+def app : Meaning := pair (fun (s : State) => text "raw" tEnd) (fun (e : Event) (s : State) => cons (pair (key "count") (vNat (natAdd 18446744073709551615 1))) s)

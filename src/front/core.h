@@ -67,6 +67,7 @@ typedef enum {
   OP_FLAG_IF,
   OP_STR_EQ,
   OP_SHOW_NAT,
+  OP_RECOVER, /* D4 error isolation: recover A d x */
   OP_PROJ
 } Op;
 

@@ -1,0 +1,31 @@
+-- Error isolation proofs and an app whose initial interpolation overflows.
+-- The guest proofs supply the expected trees and states for the JS interface.
+def kCount : Key := key "count"
+def kMore : Key := key "more"
+def natOf : (v : Value) -> Nat := fun (v : Value) => fold (fun (n : Nat) => n) (fun (f : Flag) => 0) (fun (t : Str) => 0) v
+def count : Expr := cell kCount (vNat 0)
+def next : Expr := lift1 (fun (v : Value) => vNat (natAdd (natOf v) 1)) count
+def more : Trans := onTarget kMore (fun (e : Event) (s : State) => set kCount (vNat (natAdd (natOf (count s)) 1)) s)
+def buttonOf : (k : Key) -> Meaning := fun (k : Key) => component (name "Button") nil (cons more (cons (setter k) nil)) (staticText "keep")
+def app : Meaning := beside (interpolate next) (buttonOf kCount)
+def init : State := cons (pair kCount (vNat 18446744073709551615)) nil
+def events : List Key := cons kCount (cons kMore nil)
+def eMore : Event := event kMore (vNat 0)
+def eSet : Event := event kCount (vNat 2)
+def after : State := transOf app eSet init
+def treeAfter : UITree := viewOf app after
+def viewAt : Eq UITree (viewOf app init) (comp (name "Button") nil (text "keep" tEnd) tEnd) := refl
+def stepAt : Eq State (transOf app eMore init) init := refl
+def afterAt : Eq State after (cons (pair kCount (vNat 2)) nil) := refl
+def treeAfterAt : Eq UITree treeAfter (text "3" (comp (name "Button") nil (text "keep" tEnd) tEnd)) := refl
+-- Trap detection must visit nested fields and give a trap priority over a neutral.
+def caught : Eq Nat (recover Nat 7 (natAdd 18446744073709551615 1)) 7 := refl
+def clean : Eq Nat (recover Nat 7 4) 4 := refl
+def nested : Eq (List Nat) (recover (List Nat) nil (cons 2 (cons (natAdd 18446744073709551615 1) nil))) nil := refl
+def neutralFirst : (n : Nat) -> Eq (Prod Nat Nat) (recover (Prod Nat Nat) (pair 8 9) (pair n (natAdd 18446744073709551615 1))) (pair 8 9) := fun (n : Nat) => refl
+def neutralLast : (n : Nat) -> Eq (Prod Nat Nat) (recover (Prod Nat Nat) (pair 8 9) (pair (natAdd 18446744073709551615 1) n)) (pair 8 9) := fun (n : Nat) => refl
+def hidden : Eq Nat (first (recover (Prod Nat Nat) (pair 8 9) (pair 4 (natAdd 18446744073709551615 1)))) 8 := refl
+def delayed : Eq Nat ((recover (Nat -> Nat) (fun (n : Nat) => 9) (fun (n : Nat) => recover Nat 7 (natAdd n 1))) 18446744073709551615) 7 := refl
+def partial : Eq Nat ((recover (Nat -> Nat) (fun (n : Nat) => 9) (natAdd 2)) 4) 6 := refl
+def isolateUnit : Eq UITree (viewOf (isolate omitted) init) tEnd := refl
+def isolateAgain : Eq UITree (viewOf (isolate (isolate app)) init) (viewOf (isolate app) init) := refl

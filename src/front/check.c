@@ -69,7 +69,8 @@ typedef enum {
   RULE_NAT2,
   RULE_FLAG_IF,
   RULE_STR_EQ,
-  RULE_SHOW_NAT
+  RULE_SHOW_NAT,
+  RULE_RECOVER
 } Rule;
 
 typedef struct {
@@ -126,7 +127,8 @@ static const Builtin BUILTINS[] = {
   {"natLe", 2, RULE_NAT2, OP_NAT_LE, OP_FLAG, 0},
   {"flagIf", 3, RULE_FLAG_IF, OP_FLAG_IF, OP_FLAG, 0},
   {"strEq", 2, RULE_STR_EQ, OP_STR_EQ, OP_FLAG, 0},
-  {"showNat", 1, RULE_SHOW_NAT, OP_SHOW_NAT, OP_STR, 0}
+  {"showNat", 1, RULE_SHOW_NAT, OP_SHOW_NAT, OP_STR, 0},
+  {"recover", 3, RULE_RECOVER, OP_RECOVER, OP_NAT, 0}
 };
 
 #define BUILTIN_COUNT ((uint32_t)(sizeof BUILTINS / sizeof BUILTINS[0]))
@@ -924,6 +926,17 @@ static const Core *rule_show_nat(Call *k) {
   return op3(c, OP_SHOW_NAT, 0, 1, x, NULL, NULL);
 }
 
+/* recover A d x : A (D4 error isolation) */
+static const Core *rule_recover(Call *k) {
+  Checker *c = k->c;
+  const Core *a = check(c, k->args[0], val_univ(c->m, 0));
+  const Value *av = a == NULL ? NULL : here(c, a);
+  const Core *d = av == NULL ? NULL : check(c, k->args[1], av);
+  const Core *x = d == NULL ? NULL : check(c, k->args[2], av);
+  k->type = av;
+  return op3(c, OP_RECOVER, 0, 3, a, d, x);
+}
+
 static const Core *rule(Call *k) {
   switch (k->b->rule) {
   case RULE_TYPE0:
@@ -988,6 +1001,8 @@ static const Core *rule(Call *k) {
     return rule_str_eq(k);
   case RULE_SHOW_NAT:
     return rule_show_nat(k);
+  case RULE_RECOVER:
+    return rule_recover(k);
   }
   return NULL;
 }
