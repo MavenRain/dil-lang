@@ -13,6 +13,7 @@ typedef struct {
   Diag *diag;
   const char *source;
   Arena *arena; /* the decoded bytes of string literals */
+  int partial;  /* lex_source_partial: a cut at the end of input is dropped */
 } Lexer;
 
 static const struct {
@@ -114,6 +115,35 @@ static TokKind keyword_kind(const char *text, size_t len) {
   return TOK_IDENT;
 }
 
+/* A token that the next byte can still extend: a name or a keyword, a Nat
+   literal, or ':' (to ':='). */
+static int can_grow(TokKind kind) {
+  switch (kind) {
+    case TOK_IDENT:
+    case TOK_NAT:
+    case TOK_COLON:
+    case TOK_KW_DEF:
+    case TOK_KW_REC:
+    case TOK_KW_FUN:
+    case TOK_KW_FAMILY:
+    case TOK_KW_AXIOM:
+    case TOK_KW_TYPE:
+    case TOK_KW_SIGMA:
+      return 1;
+    case TOK_EOF:
+    case TOK_STR:
+    case TOK_LPAREN:
+    case TOK_RPAREN:
+    case TOK_DEFINE:
+    case TOK_ARROW:
+    case TOK_FATARROW:
+    case TOK_STAR:
+    case TOK_BAR:
+      return 0;
+  }
+  return 0;
+}
+
 static int lex_ident(Lexer *lx) {
   size_t start = lx->pos;
   int line = lx->line;
@@ -178,6 +208,9 @@ static int lex_str(Lexer *lx) {
     advance(lx, c == '\\' ? 2 : 1);
     count++;
   }
+  /* L1 of --partial: a literal that the end of input cuts is dropped, also
+     with a cut escape or a cut UTF-8 sequence at its end. */
+  if (lx->pos >= lx->len && lx->partial) return 1;
   if (lx->pos >= lx->len) {
     return diag_fail(lx->diag, "LEX_STR_OPEN", NULL, "%s:%d:%d: a string literal has no closing quote", lx->source, line, col);
   }
@@ -224,6 +257,12 @@ static int lex_symbol(Lexer *lx) {
       break;
     default: break;
   }
+  /* L2 of --partial: a '-' or '=' at the end of input can still become '->'
+     or '=>', so it is dropped. */
+  if (kind == TOK_EOF && lx->partial && lx->pos + 1 == lx->len && (c == '-' || c == '=')) {
+    advance(lx, 1);
+    return 1;
+  }
   if (kind == TOK_EOF) {
     return diag_fail(lx->diag, "LEX_CHAR", NULL, "%s:%d:%d: unexpected byte 0x%02x", lx->source, line, col, (unsigned)(unsigned char)c);
   }
@@ -232,13 +271,14 @@ static int lex_symbol(Lexer *lx) {
   return 1;
 }
 
-int lex_source(Arena *arena, const char *source, const char *text, size_t len, TokenList *out, Diag *diag) {
+/* PARTIAL selects the reading of lex_source_partial. */
+static int lex_mode(Arena *arena, const char *source, const char *text, size_t len, int partial, TokenList *out, Diag *diag) {
   /* Each token takes at least one byte, and one EOF token follows. */
   Token *tokens = arena_alloc(arena, (len + 1) * sizeof(Token));
   if (tokens == NULL) return diag_fail(diag, "OOM", NULL, "%s: no memory for the tokens", source);
   Lexer lx = {
     .text = text, .len = len, .pos = 0, .line = 1, .col = 1,
-    .out = tokens, .count = 0, .diag = diag, .source = source, .arena = arena,
+    .out = tokens, .count = 0, .diag = diag, .source = source, .arena = arena, .partial = partial,
   };
   for (;;) {
     skip_trivia(&lx);
@@ -247,8 +287,20 @@ int lex_source(Arena *arena, const char *source, const char *text, size_t len, T
     int ok = is_ident_start(c) ? lex_ident(&lx) : is_digit(c) ? lex_nat(&lx) : c == '"' ? lex_str(&lx) : lex_symbol(&lx);
     if (!ok) return 0;
   }
+  /* L2 of --partial: a last token that touches the end of input can still
+     grow (`1` to `12`, `re` to `refl`, `:` to `:=`), so it is dropped. */
+  const Token *last = lx.count > 0 ? &lx.out[lx.count - 1] : NULL;
+  lx.count -= partial && last != NULL && last->text + last->len == text + len && can_grow(last->kind) ? 1u : 0u;
   push(&lx, TOK_EOF, lx.pos, lx.line, lx.col);
   out->items = tokens;
   out->count = lx.count;
   return 1;
+}
+
+int lex_source(Arena *arena, const char *source, const char *text, size_t len, TokenList *out, Diag *diag) {
+  return lex_mode(arena, source, text, len, 0, out, diag);
+}
+
+int lex_source_partial(Arena *arena, const char *source, const char *text, size_t len, TokenList *out, Diag *diag) {
+  return lex_mode(arena, source, text, len, 1, out, diag);
 }

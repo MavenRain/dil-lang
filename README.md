@@ -83,6 +83,42 @@ Raw meanings and entry functions still report overflows that no `recover`
 or `isolate` handles. The guest proofs in `test/app/recovery.lang` test nested
 recovery, omitted nodes, restored nodes and unchanged states.
 
+## Partial programs
+
+`langc check PROG --partial` and `langc build PROG --partial ...` read a
+program that the end of the file cuts, for example a file that an editor
+writes. A partial program means its longest complete prefix, with its open
+forms closed. Strict mode is the default. It refuses a cut program as before.
+`eval` does not take `--partial`, and the domain file is always strict.
+
+With `--partial`, the front end reads the program as follows:
+
+- It drops a string literal that the end of the file cuts.
+- It drops a last token that touches the end of the file and can still grow:
+  a name, a keyword, a Nat literal, `:`, or a single `-` or `=`.
+- It keeps a program that parses.
+- It refuses a lexical error, and a parse error before the end of the file,
+  as strict mode does.
+- After a parse error at the end of the file, it keeps the complete items.
+  It also keeps the cut item when that item parses with each open `(` closed
+  by a `)`. Only `(` is an open form.
+- When the kept cut item does not check, it drops that item and checks the
+  other items again. A final application that still needs arguments, such
+  as `def kCount : Key := key `, is also an unfinished item even though it
+  parses. It drops that item and checks the complete prefix again. Errors
+  in earlier definitions and completed arguments remain refusals.
+
+A complete program that ends with a newline gives the same JSON document and
+the same JS module with and without `--partial`.
+
+When a program S is a prefix of a program T, each definition in the meaning
+of S is a definition in the meaning of T with the same value. The test
+`partial meaning is monotone in the prefix order` in `test/app-regressions.js`
+examines this for each line prefix of `test/app/program.lang` and for each
+cut that the other partial tests use. One limit is known: a complete type
+definition can change when an arrow or an application extends it. Types
+erase, so this does not change a runtime value.
+
 ## License
 
 MIT (`LICENSE-MIT`) or Apache 2.0 (`LICENSE-APACHE`), at your option.

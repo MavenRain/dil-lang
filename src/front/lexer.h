@@ -45,6 +45,10 @@ typedef struct {
 
 /* SOURCE names the input in diagnostics. Returns 1, or 0 after a diagnostic. */
 int lex_source(Arena *arena, const char *source, const char *text, size_t len, TokenList *out, Diag *diag);
+/* lex_source for --partial: a string literal that the end of input cuts is
+   dropped (L1), and a last token that touches the end of input and can still
+   grow is dropped (L2). Every other error is refused as in lex_source. */
+int lex_source_partial(Arena *arena, const char *source, const char *text, size_t len, TokenList *out, Diag *diag);
 const char *tok_kind_name(TokKind kind);
 
 #endif

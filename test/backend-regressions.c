@@ -89,7 +89,7 @@ static int write_file(const char *path, const char *text) {
 }
 
 static int file_equals(const char *path, const char *text) {
-  char contents[64] = {0};
+  char contents[1024] = {0};
   FILE *file = fopen(path, "rb");
   size_t len;
   if (file == NULL) return 0;
@@ -275,6 +275,106 @@ static void writer_tests(void) {
   arena_release(&arena);
 }
 
+static void partial_application_tests(char *source, char *target) {
+  static const struct {
+    const char *tail;
+    int partial;
+    const char *code;
+  } cases[] = {
+    {"def cut : Nat := natAdd 2 ", 1, NULL},
+    {"def cut : Nat := natAdd 2 3", 1, NULL},
+    {"def cut : Key := key ", 1, NULL},
+    {"def cut : Meaning := component ", 1, NULL},
+    {"def cut : Nat := (fun (x : Nat) => x) ", 1, NULL},
+    {"def cut : Nat -> Nat := fun x => natAdd x ", 1, NULL},
+    {"def cut : Nat -> Nat := natAdd ", 1, NULL},
+    {"def own : Nat -> Nat -> Nat := fun x y => natAdd x y\ndef cut : Nat -> Nat := own \n", 1, NULL},
+    {"def cut : Nat := natAdd 2 ", 0, "TYPE_ARITY"},
+    {"def bad : Nat := \"wrong\"\n", 1, "TYPE_MISMATCH"},
+    {"def bad : Nat := natAdd key 1\n", 1, "TYPE_ARITY"},
+    {"def bad : Nat := natAdd 1 (key \"x\")\n", 1, "TYPE_MISMATCH"},
+    {"def bad : Nat := natAdd 1 component\n", 1, "TYPE_MISMATCH"},
+    {"def bad : Str -> Nat := natAdd 1 \n", 1, "TYPE_MISMATCH"},
+    {"def bad : Nat -> Nat := natAdd \"wrong\" \n", 1, "TYPE_MISMATCH"},
+    {"def own : Nat -> Nat := natAdd 1\ndef bad : Str -> Nat := own \n", 1, "TYPE_MISMATCH"},
+    {"def bad : Nat := natAdd 1\ndef cut : Nat := natAdd ", 1, "TYPE_ARITY"},
+    {"def bad : Nat := \"wrong\"\ndef cut : Nat := (natAdd 1 2 ", 1, "TYPE_MISMATCH"},
+    {"def bad : Nat := \"wrong\"\ndef cut : Nat := natAdd ", 1, "TYPE_MISMATCH"},
+  };
+  static const char expected[] = "{\"dil-lang\":1,\"instances\":[{\"name\":\"preserved\",\"type\":\"Nat\",\"value\":7}]}\n";
+  for (size_t i = 0; i < sizeof cases / sizeof cases[0]; i++) {
+    char text[1024];
+    char *args[] = {"langc", "build", source, "-o", target, "--partial"};
+    snprintf(text, sizeof text, "def preserved : Nat := 7\n%s", cases[i].tail);
+    expect(write_file(source, text), "cannot prepare partial application test");
+    expect(invoke(cases[i].partial ? 6 : 5, args, cases[i].code) == (cases[i].code == NULL ? 0 : 1),
+      "partial application returned the wrong exit status");
+    if (cases[i].code == NULL)
+      expect(file_equals(target, expected), "an unfinished application changed the complete prefix");
+    else
+      expect(access(target, F_OK) != 0, "a malformed completed item created output");
+    unlink(target);
+  }
+}
+
+/* Exercise the actual check command at every byte boundary, including UTF-8
+   and application arguments, rather than just selected complete lines. */
+static void partial_prefix_tests(char *source) {
+  Arena fixture;
+  Diag diag;
+  char *text = NULL;
+  size_t len = 0;
+  FILE *prefix;
+  FILE *quiet = tmpfile();
+  int saved_out = dup(STDOUT_FILENO);
+  unsigned rejected = 0;
+  arena_init(&fixture, ARENA_LIMIT_BYTES);
+  diag_init(&diag);
+  if (!read_source(&fixture, "test/app/program.lang", &text, &len, &diag)
+      || quiet == NULL || saved_out < 0) {
+    expect(0, "cannot prepare partial byte-prefix tests");
+    if (quiet != NULL) fclose(quiet);
+    if (saved_out >= 0) close(saved_out);
+    arena_release(&fixture);
+    return;
+  }
+  prefix = fopen(source, "wb");
+  if (prefix == NULL) {
+    expect(0, "cannot prepare the prefix source");
+    fclose(quiet);
+    close(saved_out);
+    arena_release(&fixture);
+    return;
+  }
+  fflush(stdout);
+  if (dup2(fileno(quiet), STDOUT_FILENO) < 0) {
+    expect(0, "cannot capture partial check output");
+  } else {
+    for (size_t end = 0; end <= len; end++) {
+      Arena arena;
+      Options opt = {.command = CMD_CHECK, .prog_path = source, .partial = 1};
+      arena_init(&arena, ARENA_LIMIT_BYTES);
+      diag_init(&diag);
+      if (fflush(prefix) != 0 || run(&opt, &arena, &diag) != 0) {
+        if (rejected++ == 0)
+          fprintf(stderr, "first rejected byte prefix: %zu (%s)\n", end, diag.code);
+      }
+      arena_release(&arena);
+      if (end < len && fputc((unsigned char)text[end], prefix) == EOF) {
+        rejected++;
+        break;
+      }
+    }
+    fflush(stdout);
+    (void)dup2(saved_out, STDOUT_FILENO);
+    expect(rejected == 0, "a byte prefix of a valid program was refused by partial check");
+  }
+  fclose(prefix);
+  fclose(quiet);
+  close(saved_out);
+  arena_release(&fixture);
+}
+
 int main(void) {
   char directory[] = "/tmp/langc-backend-XXXXXX";
   char target[FILENAME_MAX];
@@ -362,6 +462,8 @@ int main(void) {
   grouped_binder_tests();
   family_selftest(directory);
   doc_error_test();
+  partial_application_tests(source, target);
+  partial_prefix_tests(source);
   unlink(source);
   expect(rmdir(directory) == 0, "backend tests left temporary outputs behind");
   printf("backend regressions: %u checked, %u failed\n", checked, failed);

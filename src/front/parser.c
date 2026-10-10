@@ -25,6 +25,8 @@ typedef struct {
   const char *def;
   Origin origin;
   int depth;
+  const Token *failed; /* the token of the first parse failure */
+  const Term *tail;    /* the application that can still grow at EOF */
 } Parser;
 
 /* One binder group: `(x y : A)` gives two names that share one type. */
@@ -66,6 +68,7 @@ static int oom(Parser *p) {
 }
 
 static int fail_at(Parser *p, const Token *tok, const char *what) {
+  p->failed = p->failed == NULL ? tok : p->failed;
   return diag_fail(p->diag, "PARSE_EXPECT", p->def, "%s:%d:%d: expected %s, found %s",
                    p->source, tok->line, tok->col, what, tok_kind_name(tok->kind));
 }
@@ -322,6 +325,7 @@ static const Term *parse_app(Parser *p) {
     app->right = arg;
     head = app;
   }
+  if (head != NULL && at(p, TOK_EOF)) p->tail = head;
   return head;
 }
 
@@ -423,6 +427,7 @@ static int parse_family(Parser *p, Decl *d) {
 static int parse_decl(Parser *p, Decl *d) {
   const Token *tok = cur(p);
   p->def = NULL;
+  p->tail = NULL;
   d->origin = p->origin;
   d->line = tok->line;
   d->col = tok->col;
@@ -451,21 +456,99 @@ static int parse_decl(Parser *p, Decl *d) {
   return fail_at(p, tok, "'def', 'axiom' or 'family'");
 }
 
-int parse_source(Arena *arena, const char *source, Origin origin, const TokenList *toks, DeclList *list, Diag *diag) {
+/* parse_source that also gives the token of a parse failure in *FAILED (NULL
+   for a failure that is not at a token). LIST changes only on success. */
+static int parse_tokens(Arena *arena, const char *source, Origin origin, const TokenList *toks, DeclList *list, const Token **failed, const Term **tail, Diag *diag) {
   Parser p = {
     .toks = toks->items, .count = toks->count, .pos = 0, .arena = arena, .diag = diag,
-    .source = source, .def = NULL, .origin = origin, .depth = 0,
+    .source = source, .def = NULL, .origin = origin, .depth = 0, .failed = NULL, .tail = NULL,
   };
   Decl *items = list->items;
   size_t count = list->count;
   size_t cap = list->cap;
   while (!at(&p, TOK_EOF)) {
     items = grow(&p, items, count, &cap, sizeof *items);
-    if (items == NULL || !parse_decl(&p, &items[count])) return 0;
+    if (items == NULL || !parse_decl(&p, &items[count])) {
+      *failed = p.failed;
+      return 0;
+    }
     count++;
   }
   list->items = items;
   list->count = count;
   list->cap = cap;
+  if (tail != NULL && count > 0 && items[count - 1].kind == DECL_DEF) *tail = p.tail;
   return 1;
+}
+
+int parse_source(Arena *arena, const char *source, Origin origin, const TokenList *toks, DeclList *list, Diag *diag) {
+  const Token *failed = NULL;
+  return parse_tokens(arena, source, origin, toks, list, &failed, NULL, diag);
+}
+
+/* The keywords that start a top-level item. They cannot occur in a term. */
+static int is_item_keyword(TokKind kind) {
+  switch (kind) {
+    case TOK_KW_DEF:
+    case TOK_KW_FAMILY:
+    case TOK_KW_AXIOM:
+      return 1;
+    case TOK_EOF:
+    case TOK_IDENT:
+    case TOK_NAT:
+    case TOK_STR:
+    case TOK_LPAREN:
+    case TOK_RPAREN:
+    case TOK_COLON:
+    case TOK_DEFINE:
+    case TOK_ARROW:
+    case TOK_FATARROW:
+    case TOK_STAR:
+    case TOK_BAR:
+    case TOK_KW_REC:
+    case TOK_KW_FUN:
+    case TOK_KW_TYPE:
+    case TOK_KW_SIGMA:
+      return 0;
+  }
+  return 0;
+}
+
+/* Parses the first KEEP tokens of TOKS, then CLOSERS ')' tokens at the end of
+   input, then the EOF token of TOKS, with a fresh diagnostic. */
+static int parse_closed(Arena *arena, const char *source, Origin origin, const TokenList *toks, size_t keep, size_t closers, DeclList *list, Diag *diag) {
+  const Token *eof = &toks->items[toks->count - 1];
+  const Token *failed = NULL;
+  Token *items = arena_alloc(arena, (keep + closers + 1) * sizeof(Token));
+  diag_init(diag);
+  if (items == NULL) return diag_fail(diag, "OOM", NULL, "%s: no memory for the tokens", source);
+  if (keep > 0) memcpy(items, toks->items, keep * sizeof(Token));
+  for (size_t i = 0; i < closers; i++) {
+    items[keep + i] = *eof;
+    items[keep + i].kind = TOK_RPAREN;
+    items[keep + i].text = ")";
+    items[keep + i].len = 1;
+  }
+  items[keep + closers] = *eof;
+  TokenList closed = {items, keep + closers + 1};
+  return parse_tokens(arena, source, origin, &closed, list, &failed, NULL, diag);
+}
+
+int parse_source_partial(Arena *arena, const char *source, Origin origin, const TokenList *toks, DeclList *list, int *candidate, const Term **tail, Diag *diag) {
+  size_t end = toks->count - 1; /* the EOF token */
+  size_t cut = 0;               /* the keyword of the last item */
+  size_t opens = 0;
+  size_t closes = 0;
+  const Token *failed = NULL;
+  *candidate = 0;
+  *tail = NULL;
+  if (parse_tokens(arena, source, origin, toks, list, &failed, tail, diag)) return 1;
+  if (failed == NULL || failed->kind != TOK_EOF) return 0;
+  for (size_t i = 0; i < end; i++) cut = is_item_keyword(toks->items[i].kind) ? i : cut;
+  for (size_t i = cut; i < end; i++) {
+    opens += toks->items[i].kind == TOK_LPAREN ? 1u : 0u;
+    closes += toks->items[i].kind == TOK_RPAREN ? 1u : 0u;
+  }
+  *candidate = opens > closes && parse_closed(arena, source, origin, toks, end, opens - closes, list, diag);
+  return *candidate || parse_closed(arena, source, origin, toks, cut, 0, list, diag);
 }

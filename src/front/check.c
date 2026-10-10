@@ -37,6 +37,9 @@ typedef struct {
   uint32_t eta_count;
   uint32_t self;      /* the family whose fields are checked, or NO_FAMILY */
   uint32_t self_uses; /* the uses of that family in the current field */
+  const Term *partial_tail;
+  const Term *term;   /* the term currently being elaborated */
+  int incomplete;    /* the final application still needs arguments */
 } Checker;
 
 typedef enum {
@@ -367,9 +370,12 @@ static const Core *infer(Checker *c, const Term *t, const Value **type) {
 /* infer, but a failure leaves no diagnostic. */
 static const Core *try_infer(Checker *c, const Term *t, const Value **type) {
   Diag saved = *c->m->diag;
+  int incomplete = c->incomplete;
   const Core *k = infer(c, t, type);
-  if (k == NULL)
+  if (k == NULL) {
     *c->m->diag = saved;
+    c->incomplete = incomplete;
+  }
   return k;
 }
 
@@ -408,11 +414,29 @@ static const Core *binder_type(Checker *c, const Term *t, uint32_t offset, uint6
 }
 
 /* Compares the inferred *TYPE with HINT. */
+/* Missing leading arguments leave more parameters than the declared result
+   type. An incompatible function with the same arity is a completed error. */
+static int needs_arguments(Checker *c, const Value *found, const Value *want) {
+  uint32_t level = c->level;
+  unsigned depth = 0;
+  while (found != NULL && want != NULL && found->kind == VAL_PI && want->kind == VAL_PI
+         && depth++ < CHECK_DEPTH_LIMIT) {
+    const Value *arg = val_var(c->m, level++);
+    found = closure_apply(c->m, found, arg);
+    want = closure_apply(c->m, want, arg);
+  }
+  return found != NULL && want != NULL && found->kind == VAL_PI && want->kind != VAL_PI;
+}
+
 static const Core *finish(Checker *c, const Core *k, const Value *hint, const Value **type) {
   if (k == NULL || *type == NULL)
     return NULL;
-  if (hint != NULL && !expect(c, *type, hint))
+  if (hint != NULL && !expect(c, *type, hint)) {
+    if (c->partial_tail != NULL && c->term == c->partial_tail && strcmp(c->m->diag->code, "TYPE_MISMATCH") == 0
+        && needs_arguments(c, *type, hint))
+      c->incomplete = 1;
     return NULL;
+  }
   *type = hint != NULL ? hint : *type;
   return k;
 }
@@ -1188,6 +1212,8 @@ static const Core *known_core(Call *k, const Head *h) {
 /* An under-applied core name checked against a function type: WHOLE becomes
    `fun x => WHOLE x`, with a name that the lexer cannot make. */
 static const Core *eta(Checker *c, const Term *whole, const Value *hint, const Value **type) {
+  const Term *saved_tail = c->partial_tail;
+  const Core *k;
   char *name = arena_alloc(c->m->arena, 24);
   Term *x = arena_alloc(c->m->arena, sizeof *x);
   Term *app = arena_alloc(c->m->arena, sizeof *app);
@@ -1204,7 +1230,10 @@ static const Core *eta(Checker *c, const Term *whole, const Value *hint, const V
   lam->kind = TERM_LAM;
   lam->name = name;
   lam->right = app;
-  return check_lam(c, lam, hint, type);
+  if (whole == saved_tail) c->partial_tail = app;
+  k = check_lam(c, lam, hint, type);
+  c->partial_tail = saved_tail;
+  return k;
 }
 
 /* Applies K of type TY to ARGS, one by one. */
@@ -1248,8 +1277,10 @@ static const Core *apply_known(Checker *c, const Term *whole, const Head *h, con
   const Core *core;
   if (argc < arity && hint != NULL && hint->kind == VAL_PI)
     return eta(c, whole, hint, type);
-  if (argc < arity)
+  if (argc < arity) {
+    if (whole == c->partial_tail) c->incomplete = 1;
     return nul(FAIL(c, "TYPE_ARITY", "%s needs %u arguments, found %u", known_name(c, h), arity, argc));
+  }
   memset(&k, 0, sizeof k);
   k.c = c;
   k.b = h->builtin;
@@ -1352,6 +1383,10 @@ static const Core *elab_inner(Checker *c, const Term *t, const Value *hint, cons
     *type = str_type(c);
     return finish(c, core_str(c, t->name, t->nat), hint, type);
   case TERM_LAM:
+    if (t == c->partial_tail && hint != NULL && hint->kind != VAL_PI) {
+      const Core *k = infer_lam(c, t, type);
+      return finish(c, k, hint, type);
+    }
     return hint != NULL ? check_lam(c, t, hint, type) : infer_lam(c, t, type);
   case TERM_PI:
     return elab_binder(c, t, CORE_PI, hint, type);
@@ -1368,10 +1403,13 @@ static const Core *elab_inner(Checker *c, const Term *t, const Value *hint, cons
 
 static const Core *elab(Checker *c, const Term *t, const Value *hint, const Value **type) {
   const Core *k;
+  const Term *saved = c->term;
   if (c->depth >= CHECK_DEPTH_LIMIT)
     return nul(FAIL(c, "CHECK_DEPTH", "the term is nested deeper than %u levels", CHECK_DEPTH_LIMIT));
   c->depth++;
+  c->term = t;
   k = elab_inner(c, t, hint, type);
+  c->term = saved;
   c->depth--;
   return k;
 }
@@ -1526,10 +1564,11 @@ static int check_decl(Checker *c, const Decl *d) {
   return d->kind == DECL_FAMILY ? check_family(c, d) : check_def(c, d);
 }
 
-int check_program(Arena *arena, const DeclList *decls, Machine *m, Diag *diag) {
+static int check_program_mode(Arena *arena, const DeclList *decls, Machine *m, const Term *partial_tail, int *incomplete, Diag *diag) {
   Checker c;
   size_t ctors = 0;
   size_t i;
+  *incomplete = 0;
   memset(m, 0, sizeof *m);
   m->arena = arena;
   m->diag = diag;
@@ -1555,11 +1594,24 @@ int check_program(Arena *arena, const DeclList *decls, Machine *m, Diag *diag) {
     c.depth = 0;
     c.self = NO_FAMILY;
     m->def = decls->items[i].name;
-    if (!check_decl(&c, &decls->items[i]))
+    c.partial_tail = i + 1 == decls->count && decls->items[i].origin == ORIGIN_PROGRAM
+                    && decls->items[i].kind == DECL_DEF ? partial_tail : NULL;
+    if (!check_decl(&c, &decls->items[i])) {
+      *incomplete = c.incomplete;
       return 0;
+    }
   }
   m->def = NULL;
   return 1;
+}
+
+int check_program(Arena *arena, const DeclList *decls, Machine *m, Diag *diag) {
+  int incomplete;
+  return check_program_mode(arena, decls, m, NULL, &incomplete, diag);
+}
+
+int check_program_partial(Arena *arena, const DeclList *decls, Machine *m, const Term *tail, int *incomplete, Diag *diag) {
+  return check_program_mode(arena, decls, m, tail, incomplete, diag);
 }
 
 int entry_of(Machine *m, const Value *type, Entry *out) {

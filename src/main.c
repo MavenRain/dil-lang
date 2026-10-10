@@ -32,6 +32,7 @@ typedef struct {
   const char *js_path;   /* --js */
   const char *json_path; /* --json */
   int selftest;          /* --selftest */
+  int partial;           /* --partial */
 } Options;
 
 static const struct {
@@ -44,10 +45,10 @@ static const struct {
 };
 
 static int usage(FILE *err) {
-  fputs("usage: langc check PROG\n"
+  fputs("usage: langc check PROG [--partial]\n"
         "       langc eval PROG NAME [ARGS...]\n"
-        "       langc build PROG [-o OUT]\n"
-        "       langc build PROG [--js OUT.js [--selftest]] [--json OUT.json]\n", err);
+        "       langc build PROG [--partial] [-o OUT]\n"
+        "       langc build PROG [--partial] [--js OUT.js [--selftest]] [--json OUT.json]\n", err);
   return 2;
 }
 
@@ -70,12 +71,24 @@ static int take_path(int argc, char **argv, int *i, const char **slot) {
   return 1;
 }
 
+/* Sets the flag *slot, once. */
+static int take_once(int *slot) {
+  if (*slot) return 0;
+  *slot = 1;
+  return 1;
+}
+
+/* Takes the build flag at argv[*i]. -o takes the next argument as it is. */
 static int take_flag(int argc, char **argv, int *i, Options *opt) {
+  if (strcmp(argv[*i], "-o") == 0 && opt->out_path == NULL && *i + 1 < argc) {
+    *i += 1;
+    opt->out_path = argv[*i];
+    return 1;
+  }
   if (strcmp(argv[*i], "--js") == 0) return take_path(argc, argv, i, &opt->js_path);
   if (strcmp(argv[*i], "--json") == 0) return take_path(argc, argv, i, &opt->json_path);
-  if (strcmp(argv[*i], "--selftest") != 0 || opt->selftest) return 0;
-  opt->selftest = 1;
-  return 1;
+  if (strcmp(argv[*i], "--partial") == 0) return take_once(&opt->partial);
+  return strcmp(argv[*i], "--selftest") == 0 && take_once(&opt->selftest);
 }
 
 /* Compare existing files by identity, and new destinations by their parent
@@ -204,17 +217,19 @@ static int distinct_outputs(const Options *opt, Diag *diag) {
 
 /* build PROG [-o OUT], or build PROG with --js OUT.js, --json OUT.json and
    --selftest: each flag at most once, --js or --json at least, --selftest
-   only with --js. -o does not mix with the other flags. */
+   only with --js. -o does not mix with the other flags. --partial (at most
+   once) mixes with all of them. */
 static int parse_build_options(int argc, char **argv, Options *opt, Diag *diag) {
-  if (argc == 3) return 1;
-  if (argc == 5 && strcmp(argv[3], "-o") == 0) {
-    opt->out_path = argv[4];
-    return 1;
-  }
+  static const char BUILD_USAGE[] = "build takes PROG and an optional -o OUT, or --js OUT.js, --json OUT.json and --selftest";
   for (int i = 3; i < argc; i++) {
     if (!take_flag(argc, argv, &i, opt))
-      return diag_fail(diag, "USAGE", NULL, "build takes PROG and an optional -o OUT, or --js OUT.js, --json OUT.json and --selftest");
+      return diag_fail(diag, "USAGE", NULL, BUILD_USAGE);
   }
+  int targets = opt->js_path != NULL || opt->json_path != NULL || opt->selftest;
+  if (opt->out_path != NULL && targets)
+    return diag_fail(diag, "USAGE", NULL, BUILD_USAGE);
+  if (!targets)
+    return 1;
   if (opt->js_path == NULL && opt->json_path == NULL)
     return diag_fail(diag, "USAGE", NULL, "build needs --js OUT.js or --json OUT.json");
   if (!distinct_outputs(opt, diag))
@@ -230,7 +245,8 @@ static int parse_options(int argc, char **argv, Options *opt, Diag *diag) {
   opt->prog_path = argv[2];
   switch (opt->command) {
     case CMD_CHECK:
-      return argc == 3 ? 1 : diag_fail(diag, "USAGE", NULL, "too many arguments");
+      opt->partial = argc == 4 && strcmp(argv[3], "--partial") == 0;
+      return argc == 3 + opt->partial ? 1 : diag_fail(diag, "USAGE", NULL, "too many arguments");
     case CMD_EVAL:
       if (argc < 4) return diag_fail(diag, "USAGE", NULL, "eval needs a definition name");
       opt->entry = argv[3];
@@ -396,14 +412,30 @@ static int build_command(const Options *opt, Machine *m, Diag *diag) {
   }
 }
 
+/* A closed cut item or an unfinished final application is dropped, and the
+   complete prefix is checked again with a fresh diagnostic. */
+static int check_without_cut(Arena *arena, DeclList *decls, Machine *m, Diag *diag) {
+  decls->count--;
+  diag_init(diag);
+  return check_program(arena, decls, m, diag);
+}
+
 static int run(const Options *opt, Arena *arena, Diag *diag) {
   char *text = NULL;
   size_t len = 0;
   if (!read_source(arena, opt->prog_path, &text, &len, diag)) return 2;
   DeclList decls;
-  if (!front_load(arena, opt->prog_path, text, len, &decls, diag)) return 1;
+  int candidate = 0;
+  const Term *tail = NULL;
+  int incomplete = 0;
+  int loaded = opt->partial ? front_load_partial(arena, opt->prog_path, text, len, &decls, &candidate, &tail, diag)
+                            : front_load(arena, opt->prog_path, text, len, &decls, diag);
+  if (!loaded) return 1;
   Machine machine;
-  if (!check_program(arena, &decls, &machine, diag)) return 1;
+  int checked = opt->partial ? check_program_partial(arena, &decls, &machine, tail, &incomplete, diag)
+                             : check_program(arena, &decls, &machine, diag);
+  if (!checked && (candidate || incomplete)) checked = check_without_cut(arena, &decls, &machine, diag);
+  if (!checked) return 1;
   switch (opt->command) {
     case CMD_CHECK:
       puts("ok");

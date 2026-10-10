@@ -19,16 +19,36 @@ function test(name, f) {
   }
 }
 
-async function build(source, name) {
+async function build(source, name, flags = []) {
   const module = path.join(tmp, `${name}.mjs`);
   const document = path.join(tmp, `${name}.json`);
-  const r = spawnSync('build/langc', ['build', source, '--js', module, '--json', document, '--selftest'], {encoding: 'utf8'});
+  const r = spawnSync('build/langc', ['build', source, ...flags, '--js', module, '--json', document, '--selftest'], {encoding: 'utf8'});
   assert.ifError(r.error);
   assert.equal(r.signal, null);
   assert.equal(r.status, 0, r.stderr);
   assert.equal(r.stdout, '');
   const text = fs.readFileSync(document, 'utf8');
-  return {m: await import(pathToFileURL(module).href), text, doc: JSON.parse(text)};
+  return {m: await import(pathToFileURL(module).href), text, js: fs.readFileSync(module, 'utf8'), doc: JSON.parse(text)};
+}
+
+// Runs a build that dil-lang refuses: exit 1 and no output file. Returns stderr.
+function refused(source, name, flags = []) {
+  const module = path.join(tmp, `${name}.mjs`);
+  const document = path.join(tmp, `${name}.json`);
+  const r = spawnSync('build/langc', ['build', source, ...flags, '--js', module, '--json', document, '--selftest'], {encoding: 'utf8'});
+  assert.ifError(r.error);
+  assert.equal(r.status, 1, r.stderr);
+  assert.ok(!fs.existsSync(module) && !fs.existsSync(document), 'a refused build writes no file');
+  return r.stderr;
+}
+
+// Each definition of the shorter meaning A is a definition of the longer meaning B with the same value.
+function extendsMeaning(a, b) {
+  const longer = new Map(b.m.document.instances.map(i => [i.name, plain(i)]));
+  for (const i of a.m.document.instances) assert.deepEqual(longer.get(i.name), plain(i), i.name);
+  for (const k of Object.keys(a.m).filter(k => typeof a.m[k] !== 'function' && k !== 'document' && k !== 'entries'))
+    assert.deepEqual(plain(b.m[k]), plain(a.m[k]), k);
+  for (const k of Object.keys(a.m.entries)) assert.ok(k in b.m.entries, k);
 }
 
 const plain = v => JSON.parse(JSON.stringify(v, (_, x) => typeof x === 'bigint' ? Number(x) : x));
@@ -39,7 +59,7 @@ const value = text => ({tag: 'vText', valText: text});
 const entry = text => ({first: key('label'), second: value(text)});
 
 async function main() {
-  const {m, text, doc} = await build('test/app/program.lang', 'program');
+  const {m, text, js, doc} = await build('test/app/program.lang', 'program');
   const instance = name => doc.instances.find(i => i.name === name).value;
   test('manifest matches the C writer', () => assert.equal(m.encode(m.document), text));
   test('init and view match the C evaluator', () => {
@@ -104,6 +124,75 @@ async function main() {
   const raw = (await build('test/app/unisolated.lang', 'unisolated')).m;
   test('an unisolated transition overflow throws RangeError', () => {
     assert.throws(() => raw.step(event('more', {tag: 'vNat', valNat: 0n}), raw.init), RangeError);
+  });
+  // Partial programs: byte prefixes of program.lang, cut at marker text.
+  const bytes = fs.readFileSync('test/app/program.lang');
+  const find = (marker, from = 0) => {
+    const i = bytes.indexOf(marker, from);
+    assert.notEqual(i, -1, marker);
+    return i;
+  };
+  const after = (marker, from = 0) => find(marker, from) + Buffer.byteLength(marker);
+  const prefix = (name, end) => {
+    const file = path.join(tmp, `${name}.lang`);
+    fs.writeFileSync(file, bytes.subarray(0, end));
+    return file;
+  };
+  const cutBuild = (name, end, flags) => build(prefix(name, end), name, flags);
+  const partial = ['--partial'];
+  const closedCut = after('(interpolate (cell kLabel (vText ""');
+  const droppedCut = after('(cell kCount (vNat ');
+  const tokenCut = after(':= re', find('def stateLaw'));
+  const literalCut = find('😀', find('def eLabel')) + 2;
+  const closed = await cutBuild('closed', closedCut, partial);
+  const appLine = await cutBuild('app-line', find('def eEnabled'));
+  const dropped = await cutBuild('dropped', droppedCut, partial);
+  const noApp = await cutBuild('no-app', find('def app'));
+  const boundary = prefix('boundary', find('def app'));
+  const boundaryPartial = await build(boundary, 'boundary-partial', partial);
+  const boundaryStrict = await build(boundary, 'boundary-strict');
+  const token = await cutBuild('token', tokenCut, partial);
+  const noStateLaw = await cutBuild('no-state-law', find('def stateLaw'));
+  const literal = await cutBuild('literal', literalCut, partial);
+  const noLabel = await cutBuild('no-label', find('def eLabel'));
+  const lineStarts = [0, ...[...bytes.keys()].filter(i => bytes[i] === 0x0a).map(i => i + 1)];
+  const cuts = [...new Set([...lineStarts, closedCut, droppedCut, tokenCut, literalCut])].sort((a, b) => a - b);
+  const chain = await Promise.all(cuts.map(end => cutBuild(`chain-${end}`, end, partial)));
+  const whole = await build('test/app/program.lang', 'program-partial', partial);
+  const encoded = b => assert.equal(b.m.encode(b.m.document), b.text);
+  const sameDocument = (a, b) => {
+    encoded(a);
+    assert.equal(a.text, b.text);
+  };
+  test('a cut inside an open form that closes keeps the item', () => {
+    sameDocument(closed, appLine);
+    assert.deepEqual(plain(closed.m.view(closed.m.init)), plain(appLine.m.view(appLine.m.init)));
+    for (const name of ['eEnabled', 'eCount', 'eLabel'])
+      assert.deepEqual(plain(closed.m.step(host(instance(name)), closed.m.init)), plain(appLine.m.step(host(instance(name)), appLine.m.init)));
+  });
+  test('a cut inside an open form that does not check drops the item', () => sameDocument(dropped, noApp));
+  test('a cut at a definition boundary is its own complete prefix', () => {
+    sameDocument(boundaryPartial, boundaryStrict);
+    assert.equal(boundaryPartial.js, boundaryStrict.js);
+  });
+  test('a cut inside a token drops the token', () => sameDocument(token, noStateLaw));
+  test('a cut inside a string literal drops the literal', () => sameDocument(literal, noLabel));
+  test('partial meaning is monotone in the prefix order', () => {
+    chain.forEach(encoded);
+    chain.slice(1).forEach((longer, i) => extendsMeaning(chain[i], longer));
+  });
+  test('strict mode still refuses a cut source', () => {
+    assert.match(refused(prefix('strict-cut', closedCut), 'strict-cut'), /^langc: PARSE_EXPECT: /);
+    const line = after('def kCount : Key := key "count"');
+    const stray = path.join(tmp, 'stray.lang');
+    fs.writeFileSync(stray, Buffer.concat([bytes.subarray(0, line), Buffer.from(')'), bytes.subarray(line)]));
+    const strict = refused(stray, 'stray-strict');
+    assert.match(strict, /^langc: PARSE_EXPECT: /);
+    assert.equal(refused(stray, 'stray-partial', partial), strict);
+  });
+  test('a complete source builds the same with and without --partial', () => {
+    assert.equal(whole.text, text);
+    assert.equal(whole.js, js);
   });
 }
 
