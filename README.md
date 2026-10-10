@@ -34,7 +34,37 @@ with the TinyCC JavaScript host kit `hosts/tcc-js`.
 
 Slice D0. The repository holds the lang-template tcc-js kit with its sample
 domain, and `make check` and `make doc-check` pass. The dil-lang domain
-replaces the sample domain from slice D1. `docs/PLAN.md` gives the slices.
+replaces the sample domain from slice D1. Slice D3 adds app programs (the section below). `docs/PLAN.md` gives the slices.
+
+## App programs
+
+A program that defines `app : Meaning` is an app program (slice D3). It must
+also define `init : State` and `events : List Key`; the three names are fixed.
+`langc build` refuses with `BUILD_APP` when init or events is missing, when
+app, init or events has another type, when a key has two entries in init (the
+cells are a map), or when a key is listed twice in events. A program without
+`app` builds as before.
+
+The JSON document of an app program starts with the manifest, then the
+instances; `app` itself is not an instance:
+
+    {"dil-lang":1,"cells":[{"key":"seats","type":"Nat","init":2}],"events":["seats"],"components":["Panel"],"tree":{"tag":"comp",...},"instances":[...]}
+
+`cells` lists the init entries in order, each with the type of its value
+(`Nat`, `Flag` or `Str`); `events` the key names; `components` the distinct
+component names of the tree in pre-order (a node, its kids, then its
+siblings); `tree` the value of `viewOf app init`.
+
+The JS module of an app program exports `init`, `view(state)` and
+`step(event, state)` over plain data in the JSON form: a Nat is a BigInt, a
+Flag a boolean, a Str a string without unpaired surrogates, a list a dense
+array, and a family value an object as `encode` writes it (a Value is
+`{ tag: 'vNat', valNat: 2n }`, a Key is
+`{ keyName: 'seats' }`, an Event is `{ evTarget, evPayload }`). `view` gives
+the tree of a state and `step` the next state; a wrong argument throws a
+TypeError and a Nat overflow a RangeError. `document` carries the same
+manifest, so `encode(document)` is the C document byte for byte. The example
+is `examples/seats.lang`.
 
 ## License
 

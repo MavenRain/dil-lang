@@ -1,0 +1,3 @@
+-- BUILD_APP: an app program without events.
+def init : State := cons (pair (key "seats") (vNat 2)) nil
+def app : Meaning := component (name "Panel") nil nil omitted

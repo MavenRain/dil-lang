@@ -1,0 +1,4 @@
+-- BUILD_APP: the key seats has two entries in init.
+def init : State := cons (pair (key "seats") (vNat 2)) (cons (pair (key "seats") (vNat 3)) nil)
+def events : List Key := cons (key "seats") nil
+def app : Meaning := component (name "Panel") nil nil omitted

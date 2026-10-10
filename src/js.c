@@ -180,6 +180,9 @@ static const char *const RUNTIME[] = {
   "  return '{' + tag.concat(v.fields.map((x, i) => quote(info.fields[i]) + ':' + encode(x))).join(',') + '}';",
   "};",
   "const encodeInstance = (i) => '{\"name\":' + quote(i.name) + ',\"type\":' + quote(i.type) + ',\"value\":' + encode(i.value) + '}';",
+  "// The manifest of an app program (slice D3): the keys in the order of the C writer.",
+  "const encodeCell = (c) => '{\"key\":' + quote(c.key) + ',\"type\":' + quote(c.type) + ',\"init\":' + encode(c.init) + '}';",
+  "const encodeManifest = (v) => '\"cells\":[' + v.cells.map(encodeCell).join(',') + '],\"events\":[' + v.events.map((k) => quote(k)).join(',') + '],\"components\":[' + v.components.map((c) => quote(c)).join(',') + '],\"tree\":' + encode(v.tree) + ',';",
   "const encodeObject = (v) => {",
   "  switch (v.kind) {",
   "    case 'trap': throw new RangeError('EVAL_OVERFLOW: ' + OVERFLOW);",
@@ -194,7 +197,7 @@ static const char *const RUNTIME[] = {
   "    case 'cons': return encodeList(v);",
   "    case 'pack': return '{\"witness\":' + encode(v.witness) + ',\"payload\":' + encode(v.payload) + '}';",
   "    case 'ctor': return encodeCtor(v);",
-  "    case 'document': return '{' + quote(v.lang) + ':1,\"instances\":[' + v.instances.map(encodeInstance).join(',') + ']}\\n';",
+  "    case 'document': return '{' + quote(v.lang) + ':1,' + (v.tree === undefined ? '' : encodeManifest(v)) + '\"instances\":[' + v.instances.map(encodeInstance).join(',') + ']}\\n';",
   "    default: throw new TypeError('encode: an unknown value');",
   "  }",
   "};",
@@ -582,7 +585,7 @@ static int emit_ctor_row(Js *o, const CtorInfo *ci) {
   return ok && put(o, "] },\n");
 }
 
-static int emit_tables(Js *o) {
+static int emit_tables(Js *o, const AppInfo *a) {
   const Machine *m = o->m;
   uint32_t i;
   int ok = put(o, "const FAMILIES = [\n");
@@ -595,7 +598,13 @@ static int emit_tables(Js *o) {
   ok = ok && put(o, "];\nconst CTORS = [\n");
   for (i = 0; ok && i < m->ctor_count; i++)
     ok = emit_ctor_row(o, &m->ctors[i]);
-  return ok && put(o, "];\n");
+  ok = ok && put(o, "];\n");
+  if (!ok || !a->present)
+    return ok;
+  return put(o, "const APP = Object.freeze({ key: ") && put_u64(o, a->key) && put(o, ", vNat: ") && put_u64(o, a->v_nat)
+    && put(o, ", vFlag: ") && put_u64(o, a->v_flag) && put(o, ", vText: ") && put_u64(o, a->v_text) && put(o, ", event: ")
+    && put_u64(o, a->event) && put(o, ", tEnd: ") && put_u64(o, a->t_end) && put(o, ", text: ") && put_u64(o, a->text)
+    && put(o, ", comp: ") && put_u64(o, a->comp) && put(o, " });\n");
 }
 
 /* Each definition is computed when first used, as def_value does. */
@@ -611,6 +620,109 @@ static int emit_defs(Js *o) {
   return ok;
 }
 
+/* The app program (slice D3): the manifest fields of the document, and init,
+   view and step over plain data. The fixed text; emit_app adds the lines
+   that name the definitions. */
+static const char *const APP_RUNTIME[] = {
+  "// The app program (slice D3): the manifest fields, and init, view and step",
+  "// over plain data in the JSON form. A Nat is a BigInt, a Flag a boolean, a",
+  "// Str a string, a list an array and a family value an object as encode",
+  "// writes it: the tag (when the family has two or more constructors), then",
+  "// the fields by name. A wrong argument throws a TypeError.",
+  "const typeOf = (c) => (c === APP.vNat ? 'Nat' : c === APP.vFlag ? 'Flag' : 'Str');",
+  "const cellsOf = (s) => Object.freeze(spine(s).items.map((p) => Object.freeze({ key: p.first.fields[0], type: typeOf(p.second.ctor), init: p.second.fields[0] })));",
+  "const eventsOf = (ks) => Object.freeze(spine(ks).items.map((k) => k.fields[0]));",
+  "// The nodes of a tree in pre-order: the node, its kids, then its siblings.",
+  "const treeNodes = (t) => (t.ctor === APP.tEnd ? [] : t.ctor === APP.comp ? [t].concat(treeNodes(t.fields[2]), treeNodes(t.fields[3])) : treeNodes(t.fields[1]));",
+  "const componentsOf = (t) => Object.freeze(treeNodes(t).map((n) => n.fields[0].fields[0]).filter((nm, i, all) => all.indexOf(nm) === i));",
+  "const plainList = (v) => {",
+  "  const s = spine(v);",
+  "  return s.end === NIL ? Object.freeze(s.items.map((x) => plain(x))) : plain(s.end);",
+  "};",
+  "const plainCtor = (v) => {",
+  "  const info = CTORS[v.ctor];",
+  "  const family = FAMILIES[info.family];",
+  "  if (family.enumeration) return info.name;",
+  "  const tag = family.count === 1 ? [] : [['tag', info.name]];",
+  "  return Object.freeze(Object.fromEntries(tag.concat(v.fields.map((x, i) => [info.fields[i], plain(x)]))));",
+  "};",
+  "const plain = (v) => {",
+  "  if (v === TRAP) throw new RangeError('EVAL_OVERFLOW: ' + OVERFLOW);",
+  "  if (typeof v === 'bigint' || typeof v === 'boolean' || typeof v === 'string') return v;",
+  "  if (v === null || typeof v !== 'object') throw new TypeError('app: a type or a function has no plain form');",
+  "  switch (v.kind) {",
+  "    case 'unit': return Object.freeze({});",
+  "    case 'none': return null;",
+  "    case 'refl': return null;",
+  "    case 'some': return wraps(v.value) ? Object.freeze({ some: plain(v.value) }) : plain(v.value);",
+  "    case 'pair': return Object.freeze({ first: plain(v.first), second: plain(v.second) });",
+  "    case 'inl': return Object.freeze({ inl: plain(v.value) });",
+  "    case 'inr': return Object.freeze({ inr: plain(v.value) });",
+  "    case 'nil': return Object.freeze([]);",
+  "    case 'cons': return plainList(v);",
+  "    case 'pack': return Object.freeze({ witness: plain(v.witness), payload: plain(v.payload) });",
+  "    case 'ctor': return plainCtor(v);",
+  "    default: throw new TypeError('app: an unknown value');",
+  "  }",
+  "};",
+  "const bad = (what) => { throw new TypeError('app: ' + what); };",
+  "const decodeNat = (v) => (typeof v === 'bigint' && v >= 0n && v <= MAX ? v : bad('a Nat is a BigInt in 0 to 2^64-1'));",
+  "const decodeFlag = (v) => (typeof v === 'boolean' ? v : bad('a Flag is a boolean'));",
+  "const decodeStr = (v) => {",
+  "  if (typeof v !== 'string') return bad('a Str is a string');",
+  "  for (const ch of v) {",
+  "    const c = ch.codePointAt(0);",
+  "    if (c >= 0xd800 && c <= 0xdfff) return bad('a Str must contain Unicode scalar values');",
+  "  }",
+  "  return v;",
+  "};",
+  "const decodeObject = (v, what) => (v !== null && typeof v === 'object' && !Array.isArray(v) ? v : bad(what + ' is an object'));",
+  "const decodeValue = (v) => {",
+  "  const o = decodeObject(v, 'a Value');",
+  "  switch (o.tag) {",
+  "    case 'vNat': return ctor(APP.vNat, decodeNat(o.valNat));",
+  "    case 'vFlag': return ctor(APP.vFlag, decodeFlag(o.valFlag));",
+  "    case 'vText': return ctor(APP.vText, decodeStr(o.valText));",
+  "    default: return bad('a Value has the tag vNat, vFlag or vText');",
+  "  }",
+  "};",
+  "const decodeKey = (v) => ctor(APP.key, decodeStr(decodeObject(v, 'a Key').keyName));",
+  "const decodeEntry = (v) => {",
+  "  const o = decodeObject(v, 'a State entry');",
+  "  return pair(decodeKey(o.first), decodeValue(o.second));",
+  "};",
+  "const decodeState = (v) => {",
+  "  if (!Array.isArray(v)) return bad('a State is an array of entries');",
+  "  const items = [];",
+  "  for (let i = 0; i < v.length; i++) items.push(decodeEntry(v[i]));",
+  "  return list(items, NIL);",
+  "};",
+  "const decodeEvent = (v) => {",
+  "  const o = decodeObject(v, 'an Event');",
+  "  return ctor(APP.event, decodeKey(o.evTarget), decodeValue(o.evPayload));",
+  "};",
+  "const result = (name, r) => {",
+  "  if (r === TRAP) throw new RangeError('EVAL_OVERFLOW: ' + name + ': ' + OVERFLOW);",
+  "  return plain(r);",
+  "};",
+};
+
+/* The app program: APP_RUNTIME, then the exports init, view and step over
+   the definitions in A. */
+static int emit_app(Js *o, const AppInfo *a) {
+  size_t i;
+  int ok = 1;
+  o->def = "app";
+  for (i = 0; ok && i < sizeof APP_RUNTIME / sizeof APP_RUNTIME[0]; i++)
+    ok = put(o, APP_RUNTIME[i]) && put(o, "\n");
+  return ok && put(o, "const appView = once(() => app(g") && put_u64(o, a->view_of) && put(o, "(), g") && put_u64(o, a->app)
+    && put(o, "()));\nconst appTrans = once(() => app(g") && put_u64(o, a->trans_of) && put(o, "(), g") && put_u64(o, a->app)
+    && put(o, "()));\nconst appTree = once(() => app(appView(), g") && put_u64(o, a->init) && put(o, "()));\n")
+    && put(o, "export const init = plain(g") && put_u64(o, a->init) && put(o, "());\n")
+    && put(o, "export const view = (state) => result('view', app(appView(), decodeState(state)));\n")
+    && put(o, "export const step = (event, state) => result('step', app(app(appTrans(), decodeEvent(event)), decodeState(state)));\n");
+}
+
 static int emit_instance(Js *o, uint32_t index, char *type_text) {
   const DefInfo *d = &o->m->defs[index];
   o->def = d->name;
@@ -620,13 +732,18 @@ static int emit_instance(Js *o, uint32_t index, char *type_text) {
     && put_name(o, type_text) && put(o, ", value: g") && put_u64(o, index) && put(o, "() }),\n");
 }
 
-/* The instance document of the JSON target, its values computed in JS. */
-static int emit_document(Js *o, char *type_text) {
+/* The instance document of the JSON target, its values computed in JS. An
+   app program adds the manifest fields and leaves app out of the instances. */
+static int emit_document(Js *o, const AppInfo *a, char *type_text) {
   uint32_t i;
   int ok = put(o, "export const document = Object.freeze({\n  kind: 'document',\n  lang: ") && put_name(o, json_lang_name)
-    && put(o, ",\n  instances: Object.freeze([\n");
+    && put(o, ",\n");
+  if (ok && a->present)
+    ok = put(o, "  cells: cellsOf(g") && put_u64(o, a->init) && put(o, "()),\n  events: eventsOf(g") && put_u64(o, a->events)
+      && put(o, "()),\n  components: componentsOf(appTree()),\n  tree: appTree(),\n");
+  ok = ok && put(o, "  instances: Object.freeze([\n");
   for (i = 0; ok && i < o->m->def_count; i++)
-    ok = !json_is_instance(&o->m->defs[i]) || emit_instance(o, i, type_text);
+    ok = !json_is_instance(&o->m->defs[i]) || (a->present && i == a->app) || emit_instance(o, i, type_text);
   return ok && put(o, "  ]),\n});\n");
 }
 
@@ -795,12 +912,16 @@ static int emit_selftest(Js *o) {
 
 int js_module(Machine *m, int selftest, const char **text, size_t *len) {
   Js o;
+  AppInfo a;
   char *type_text = arena_alloc(m->arena, JS_TYPE_MAX);
   memset(&o, 0, sizeof o);
   o.m = m;
   if (type_text == NULL)
     return diag_fail(m->diag, "OOM", NULL, "the arena limit is reached");
-  if (!emit_runtime(&o) || !emit_tables(&o) || !emit_defs(&o) || !emit_document(&o, type_text) || !emit_entries(&o))
+  if (!json_app_info(m, &a))
+    return 0;
+  if (!emit_runtime(&o) || !emit_tables(&o, &a) || !emit_defs(&o) || (a.present && !emit_app(&o, &a))
+      || !emit_document(&o, &a, type_text) || !emit_entries(&o))
     return 0;
   if (selftest && !emit_selftest(&o))
     return 0;

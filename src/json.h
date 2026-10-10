@@ -23,4 +23,20 @@ int json_document(Machine *m, const char **text, size_t *len);
 /* 1 when D is an instance (the JS target writes the same document). */
 int json_is_instance(const DefInfo *d);
 
+/* The app program (slice D3): the PROGRAM definitions app, init and events,
+   and the domain names the manifest and the JS exports use. */
+typedef struct {
+  int present; /* 1 when the program defines app */
+  uint32_t app;
+  uint32_t init;
+  uint32_t events;
+  uint32_t view_of;  /* the domain definition viewOf */
+  uint32_t trans_of; /* the domain definition transOf */
+  uint32_t key, v_nat, v_flag, v_text, event, t_end, text, comp; /* constructors */
+  uint32_t ui_tree; /* the family UITree */
+} AppInfo;
+/* Finds app, init and events and checks them. Returns 1 (and PRESENT 0 or
+   1), or 0 after a BUILD_APP diagnostic. */
+int json_app_info(Machine *m, AppInfo *out);
+
 #endif

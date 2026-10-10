@@ -35,6 +35,7 @@ check: build/langc build/backend-regressions check-clang
 	sh test/gate.sh
 	TCC="$(TCC)" node test/regressions.js
 	node test/printer-regressions.js
+	node test/app-regressions.js
 
 # Fail on an em-dash or en-dash in a Markdown file, or on a malformed
 # placeholder (the checks of lang-template bin/doc-check.pl). Skip

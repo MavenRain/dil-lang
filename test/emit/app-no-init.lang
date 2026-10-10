@@ -1,0 +1,3 @@
+-- BUILD_APP: an app program without init.
+def events : List Key := cons (key "seats") nil
+def app : Meaning := component (name "Panel") nil nil omitted

@@ -1,2 +1,8 @@
 trap.lang EVAL_OVERFLOW
 function.lang JSON_VALUE
+app-no-init.lang BUILD_APP
+app-no-events.lang BUILD_APP
+app-init-type.lang BUILD_APP
+app-type.lang BUILD_APP
+app-dup-init.lang BUILD_APP
+app-dup-events.lang BUILD_APP

@@ -1,0 +1,36 @@
+-- An app program (slice D3): the fixed names init, events and app. langc build
+-- writes the manifest (cells, events, components, the tree at init) and the
+-- module exports init, view and step. The tests below run event lists through
+-- transOf app from left to right and compare states and trees.
+def kSeats : Key := key "seats"
+def kOpen : Key := key "open"
+def kMore : Key := key "more"
+def natOf : (v : Value) -> Nat := fun (v : Value) => fold (fun (n : Nat) => n) (fun (f : Flag) => 0) (fun (t : Str) => 0) v
+def flagOf : (v : Value) -> Flag := fun (v : Value) => fold (fun (n : Nat) => flagNo) (fun (f : Flag) => f) (fun (t : Str) => flagNo) v
+def seats : Expr := cell kSeats (vNat 1)
+def price : Expr := lift1 (fun (v : Value) => vNat (natMul (natOf v) 29)) seats
+def isOpen : (s : State) -> Flag := fun (s : State) => flagOf (getOr kOpen (vFlag flagNo) s)
+-- "more" is an event without a cell: seats := seats + 1.
+def more : Trans := onTarget kMore (fun (e : Event) (s : State) => set kSeats (vNat (natAdd (natOf (getOr kSeats (vNat 0) s)) 1)) s)
+def rows : (s : State) -> List Value := fun (s : State) => cons (vNat 1) (cons (vNat 2) nil)
+def sliderOf : (k : Key) -> Meaning := fun (k : Key) => component (name "Slider") (cons (pair (name "value") (cell k (vNat 1))) (cons (pair (name "max") (lit (vNat 8))) nil)) (cons (setter k) nil) omitted
+def buttonOf : (k : Key) -> (t : Trans) -> Meaning := fun (k : Key) (t : Trans) => component (name "Button") (cons (pair (name "label") (lit (vText "More"))) nil) (cons t nil) omitted
+def toggleOf : (k : Key) -> Meaning := fun (k : Key) => component (name "Toggle") (cons (pair (name "on") (cell k (vFlag flagNo))) nil) (cons (setter k) nil) omitted
+def cardOf : (t : Str) -> (x : Expr) -> Meaning := fun (t : Str) (x : Expr) => component (name "Card") nil nil (beside (staticText t) (interpolate x))
+def seatOf : (v : Value) -> Meaning := fun (v : Value) => component (name "Seat") (cons (pair (name "n") (lit v)) nil) nil omitted
+def init : State := cons (pair kSeats (vNat 2)) (cons (pair kOpen (vFlag flagNo)) nil)
+def events : List Key := cons kSeats (cons kOpen (cons kMore nil))
+def app : Meaning := component (name "Panel") (cons (pair (name "title") (lit (vText "Seats"))) nil) nil (besideAll (cons (cardOf "Seats: " seats) (cons (sliderOf kSeats) (cons (buttonOf kMore more) (cons (toggleOf kOpen) (cons (conditional isOpen (cardOf "Price: " price) (staticText "closed")) (cons (loopOver rows seatOf) nil)))))))
+-- Events run from left to right: fold on a List is a right fold, so fold to a State -> State function.
+def runAll : (es : List Event) -> (s : State) -> State := fun (es : List Event) (s : State) => fold (fun (e : Event) (k : State -> State) => fun (s0 : State) => k (transOf app e s0)) (fun (s0 : State) => s0) es s
+def eMore : Event := event kMore (vNat 0)
+def eOpen : Event := event kOpen (vFlag flagYes)
+def eSeats : Event := event kSeats (vNat 5)
+def treeAtInit : Eq UITree (viewOf app init) (comp (name "Panel") (cons (pair (name "title") (vText "Seats")) nil) (comp (name "Card") nil (text "Seats: " (text "2" tEnd)) (comp (name "Slider") (cons (pair (name "value") (vNat 2)) (cons (pair (name "max") (vNat 8)) nil)) tEnd (comp (name "Button") (cons (pair (name "label") (vText "More")) nil) tEnd (comp (name "Toggle") (cons (pair (name "on") (vFlag flagNo)) nil) tEnd (text "closed" (comp (name "Seat") (cons (pair (name "n") (vNat 1)) nil) tEnd (comp (name "Seat") (cons (pair (name "n") (vNat 2)) nil) tEnd tEnd))))))) tEnd) := refl
+def afterMore : Eq State (runAll (cons eMore nil) init) (cons (pair kSeats (vNat 3)) (cons (pair kOpen (vFlag flagNo)) nil)) := refl
+-- Left to right: more (3), open, then seats := 5. The other order would end at 6.
+def afterSeq : Eq State (runAll (cons eMore (cons eOpen (cons eSeats nil))) init) (cons (pair kSeats (vNat 5)) (cons (pair kOpen (vFlag flagYes)) nil)) := refl
+def afterUnknown : Eq State (runAll (cons (event (key "nope") (vNat 9)) nil) init) init := refl
+def viewAfterOpen : Eq UITree (viewOf app (runAll (cons eOpen (cons eMore nil)) init)) (comp (name "Panel") (cons (pair (name "title") (vText "Seats")) nil) (comp (name "Card") nil (text "Seats: " (text "3" tEnd)) (comp (name "Slider") (cons (pair (name "value") (vNat 3)) (cons (pair (name "max") (vNat 8)) nil)) tEnd (comp (name "Button") (cons (pair (name "label") (vText "More")) nil) tEnd (comp (name "Toggle") (cons (pair (name "on") (vFlag flagYes)) nil) tEnd (comp (name "Card") nil (text "Price: " (text "87" tEnd)) (comp (name "Seat") (cons (pair (name "n") (vNat 1)) nil) tEnd (comp (name "Seat") (cons (pair (name "n") (vNat 2)) nil) tEnd tEnd))))))) tEnd) := refl
+-- An entry: the seats cell after n "more" events (fold on Nat applies the step n times).
+def seatsAfter : (n : Nat) -> Nat := fun (n : Nat) => natOf (getOr kSeats (vNat 0) (fold (fun (s : State) => transOf app eMore s) init n))

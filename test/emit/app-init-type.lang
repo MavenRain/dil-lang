@@ -1,0 +1,4 @@
+-- BUILD_APP: init with the type Nat, not State.
+def init : Nat := 2
+def events : List Key := cons (key "seats") nil
+def app : Meaning := component (name "Panel") nil nil omitted

@@ -26,3 +26,5 @@ text quoted => "hi \"x\" \\ \n ok"
 text accent => "café"
 text snow => "☃ 2°"
 text priceTag => "1200"
+seats seatsAfter 0 => 2
+seats seatsAfter 3 => 5

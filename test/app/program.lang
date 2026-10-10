@@ -1,0 +1,14 @@
+-- Reference states and trees for the exported JS app interface.
+def kCount : Key := key "count"
+def kEnabled : Key := key "enabled"
+def kLabel : Key := key "label"
+def init : State := cons (pair kCount (vNat 2)) (cons (pair kEnabled (vFlag flagYes)) (cons (pair kLabel (vText "café ☃ 😀\n\"\\")) nil))
+def events : List Key := cons kCount (cons kEnabled (cons kLabel nil))
+def app : Meaning := component (name "Panel") (cons (pair (name "count") (cell kCount (vNat 0))) (cons (pair (name "enabled") (cell kEnabled (vFlag flagNo))) (cons (pair (name "label") (cell kLabel (vText ""))) nil))) (cons (setter kCount) (cons (setter kEnabled) (cons (setter kLabel) nil))) (interpolate (cell kLabel (vText "")))
+def eEnabled : Event := event kEnabled (vFlag flagNo)
+def eCount : Event := event kCount (vNat 5)
+def eLabel : Event := event kLabel (vText "next 😀")
+def after : State := transOf app eLabel (transOf app eCount (transOf app eEnabled init))
+def treeAfter : UITree := viewOf app after
+def stateLaw : Eq State after (cons (pair kCount (vNat 5)) (cons (pair kEnabled (vFlag flagNo)) (cons (pair kLabel (vText "next 😀")) nil))) := refl
+def treeLaw : Eq UITree treeAfter (comp (name "Panel") (cons (pair (name "count") (vNat 5)) (cons (pair (name "enabled") (vFlag flagNo)) (cons (pair (name "label") (vText "next 😀")) nil))) (text "next 😀" tEnd) tEnd) := refl

@@ -364,8 +364,290 @@ static int instance_json(Out *o, uint32_t index, char *type_text, int first) {
     && value_json(o, d->type, v) && put_text(o, "}");
 }
 
+/* The app program (slice D3): the PROGRAM definitions app, init and events.
+   The manifest comes before the instances. */
+
+/* The index of the definition NAME (a PROGRAM definition when PROGRAM_ONLY). */
+static int find_def(const Machine *m, const char *name, int program_only, uint32_t *out) {
+  uint32_t i;
+  for (i = 0; i < m->def_count; i++) {
+    const DefInfo *d = &m->defs[i];
+    if ((!program_only || d->origin == ORIGIN_PROGRAM) && strcmp(d->name, name) == 0) {
+      *out = i;
+      return 1;
+    }
+  }
+  return 0;
+}
+
+static int domain_def(Machine *m, const char *name, uint32_t *out) {
+  return find_def(m, name, 0, out) || diag_fail(m->diag, "INTERNAL", "app", "the domain has no definition %s", name);
+}
+
+static int find_ctor(Machine *m, const char *name, uint32_t *out) {
+  uint32_t i;
+  for (i = 0; i < m->ctor_count; i++) {
+    if (strcmp(m->ctors[i].name, name) == 0) {
+      *out = i;
+      return 1;
+    }
+  }
+  return diag_fail(m->diag, "INTERNAL", "app", "the domain has no constructor %s", name);
+}
+
+static int find_family(Machine *m, const char *name, uint32_t *out) {
+  uint32_t i;
+  for (i = 0; i < m->family_count; i++) {
+    if (strcmp(m->families[i].name, name) == 0) {
+      *out = i;
+      return 1;
+    }
+  }
+  return diag_fail(m->diag, "INTERNAL", "app", "the domain has no family %s", name);
+}
+
+/* 1 when definition INDEX has the type WANT (written WANT_TEXT). */
+static int app_typed(Machine *m, uint32_t index, const Value *want, const char *want_text) {
+  const DefInfo *d = &m->defs[index];
+  char *text;
+  if (want == NULL)
+    return 0;
+  if (conv_values(m, 0, d->type, want))
+    return 1;
+  text = arena_alloc(m->arena, JSON_TYPE_MAX);
+  if (text == NULL)
+    return diag_fail(m->diag, "OOM", d->name, "the arena limit is reached");
+  if (!value_print(m, NULL, 0, d->type, text, JSON_TYPE_MAX))
+    return diag_fail(m->diag, "BUILD_APP", d->name, "%s has a type that does not print; an app program needs %s : %s", d->name, d->name, want_text);
+  return diag_fail(m->diag, "BUILD_APP", d->name, "%s has the type %s; an app program needs %s : %s", d->name, text, d->name, want_text);
+}
+
+/* The name of the Key value K (the constructor key over a Str), or NULL. */
+static const Value *key_name(const AppInfo *a, const Value *k) {
+  if (k == NULL || k->kind != VAL_OP || !val_is(k, OP_CTOR) || k->inst != a->key || k->argc < 1)
+    return NULL;
+  return k->args[0]->kind == VAL_STR ? k->args[0] : NULL;
+}
+
+/* The key name of a list element: the first of a pair in init, the key in events. */
+static const Value *element_key(const AppInfo *a, const Value *head, int entries) {
+  if (!entries)
+    return key_name(a, head);
+  if (head == NULL || head->kind != VAL_OP || !val_is(head, OP_PAIR) || head->argc < 2)
+    return NULL;
+  return key_name(a, head->args[0]);
+}
+
+static int same_str(const Value *a, const Value *b) {
+  return a->nat == b->nat && memcmp(a->name, b->name, (size_t)a->nat) == 0;
+}
+
+/* Walks LIST (init when ENTRIES, else events) and refuses a key that occurs
+   twice. A trap is a compile error, as for an instance. */
+static int app_distinct(Machine *m, const AppInfo *a, const Value *list, int entries) {
+  const char *def = entries ? "init" : "events";
+  const Value *outer;
+  for (outer = list; outer != NULL; outer = outer->args[1]) {
+    const Value *name;
+    const Value *inner;
+    if (outer->kind == VAL_TRAP)
+      return diag_fail(m->diag, "EVAL_OVERFLOW", def, "the instance value traps (a Nat overflow)");
+    if (outer->kind != VAL_OP || !(val_is(outer, OP_NIL) || (val_is(outer, OP_CONS) && outer->argc >= 2)))
+      return diag_fail(m->diag, "INTERNAL", def, "the app checker found a value that is not a list");
+    if (val_is(outer, OP_NIL))
+      return 1;
+    name = element_key(a, outer->args[0], entries);
+    if (name == NULL)
+      return diag_fail(m->diag, "INTERNAL", def, "the app checker found an element without a key");
+    for (inner = list; inner != outer; inner = inner->args[1]) {
+      const Value *other = element_key(a, inner->args[0], entries);
+      if (other != NULL && same_str(name, other))
+        return entries
+          ? diag_fail(m->diag, "BUILD_APP", def, "the key \"%.*s\" has two entries in init; the cells are a map", (int)name->nat, name->name)
+          : diag_fail(m->diag, "BUILD_APP", def, "the key \"%.*s\" is listed twice in events", (int)name->nat, name->name);
+    }
+  }
+  return 1;
+}
+
+/* The value of definition INDEX, evaluated as instance_json does. */
+static const Value *app_value(Machine *m, uint32_t index) {
+  m->def = m->defs[index].name;
+  m->fuel = EVAL_FUEL_STEPS;
+  m->depth = 0;
+  return def_value(m, index);
+}
+
+int json_app_info(Machine *m, AppInfo *out) {
+  uint32_t meaning, state, key_family;
+  const Value *key_type;
+  const Value *init;
+  const Value *events;
+  memset(out, 0, sizeof *out);
+  if (!find_def(m, "app", 1, &out->app))
+    return 1;
+  out->present = 1;
+  if (!find_def(m, "init", 1, &out->init))
+    return diag_fail(m->diag, "BUILD_APP", "app", "the app program needs a definition init : State");
+  if (!find_def(m, "events", 1, &out->events))
+    return diag_fail(m->diag, "BUILD_APP", "app", "the app program needs a definition events : List Key");
+  if (!domain_def(m, "Meaning", &meaning) || !domain_def(m, "State", &state) || !domain_def(m, "viewOf", &out->view_of)
+      || !domain_def(m, "transOf", &out->trans_of) || !find_family(m, "Key", &key_family) || !find_family(m, "UITree", &out->ui_tree)
+      || !find_ctor(m, "key", &out->key) || !find_ctor(m, "vNat", &out->v_nat) || !find_ctor(m, "vFlag", &out->v_flag)
+      || !find_ctor(m, "vText", &out->v_text) || !find_ctor(m, "event", &out->event) || !find_ctor(m, "tEnd", &out->t_end)
+      || !find_ctor(m, "text", &out->text) || !find_ctor(m, "comp", &out->comp))
+    return 0;
+  m->def = "app";
+  m->fuel = EVAL_FUEL_STEPS;
+  m->depth = 0;
+  key_type = val_make(m, OP_FAMILY, key_family, 0, NULL, NULL, NULL);
+  if (!app_typed(m, out->app, app_value(m, meaning), "Meaning") || !app_typed(m, out->init, app_value(m, state), "State")
+      || !app_typed(m, out->events, key_type == NULL ? NULL : val_make(m, OP_LIST, 0, 1, key_type, NULL, NULL), "List Key"))
+    return 0;
+  init = app_value(m, out->init);
+  events = app_value(m, out->events);
+  return init != NULL && events != NULL && app_distinct(m, out, init, 1) && app_distinct(m, out, events, 0);
+}
+
+/* One cell of the manifest: the init entry ENTRY, a pair of a key and a value. */
+static int cell_json(Out *o, const AppInfo *a, const Value *entry, int first) {
+  const Value *key = entry->args[0];
+  const Value *val = entry->args[1];
+  const Value *field_type;
+  const char *type;
+  if (!ready(o, val))
+    return 0;
+  if (key_name(a, key) == NULL || !val_is(val, OP_CTOR) || val->argc < 1)
+    return internal(o, "a cell that is not a key and a value");
+  type = val->inst == a->v_nat ? "Nat" : val->inst == a->v_flag ? "Flag" : val->inst == a->v_text ? "Str" : NULL;
+  if (type == NULL)
+    return internal(o, "a cell value with an unknown constructor");
+  field_type = eval_core(o->m, NULL, o->m->ctors[val->inst].fields[0].type);
+  return field_type != NULL && (first || put_text(o, ",")) && put_text(o, "{\"key\":")
+    && put_bytes(o, key->args[0]->name, (size_t)key->args[0]->nat) && put_text(o, ",\"type\":\"") && put_text(o, type)
+    && put_text(o, "\",\"init\":") && value_json(o, field_type, val->args[0]) && put_text(o, "}");
+}
+
+/* The component names written so far (Str values). */
+typedef struct {
+  const Value **names;
+  uint32_t count;
+  uint32_t cap;
+} Seen;
+
+/* Adds NAME when it is new; ADDED tells. */
+static int seen_add(Out *o, Seen *s, const Value *name, int *added) {
+  uint32_t i;
+  *added = 0;
+  for (i = 0; i < s->count; i++) {
+    if (same_str(s->names[i], name))
+      return 1;
+  }
+  if (s->count == s->cap) {
+    uint32_t cap = s->cap == 0 ? 16u : s->cap * 2u;
+    const Value **next = arena_alloc(o->m->arena, cap * sizeof *next);
+    if (next == NULL)
+      return diag_fail(o->m->diag, "OOM", o->def, "the arena limit is reached");
+    if (s->count > 0)
+      memcpy(next, s->names, s->count * sizeof *next);
+    s->names = next;
+    s->cap = cap;
+  }
+  s->names[s->count] = name;
+  s->count++;
+  *added = 1;
+  return 1;
+}
+
+/* Writes the new component names of the tree T in pre-order: the node, its
+   kids, then its siblings. The kids recurse; the siblings loop. */
+static int components_json(Out *o, const AppInfo *a, Seen *s, const Value *t) {
+  if (o->depth >= JSON_DEPTH_LIMIT)
+    return diag_fail(o->m->diag, "JSON_DEPTH", o->def, "the tree is deeper than %u", JSON_DEPTH_LIMIT);
+  while (t != NULL) {
+    const Value *name;
+    int added;
+    if (!ready(o, t))
+      return 0;
+    if (!val_is(t, OP_CTOR))
+      return internal(o, "a tree node that is not a constructor");
+    if (t->inst == a->t_end)
+      return 1;
+    if (t->inst == a->text) {
+      if (t->argc < 2)
+        return internal(o, "a text node without its fields");
+      t = t->args[1];
+      continue;
+    }
+    if (t->inst != a->comp || t->argc < 4)
+      return internal(o, "a tree node of an unknown constructor");
+    name = t->args[0];
+    if (!ready(o, name))
+      return 0;
+    if (!val_is(name, OP_CTOR) || name->argc < 1 || name->args[0]->kind != VAL_STR)
+      return internal(o, "a component name that is not a Str");
+    if (!seen_add(o, s, name->args[0], &added))
+      return 0;
+    if (added && !((s->count == 1 || put_text(o, ",")) && put_bytes(o, name->args[0]->name, (size_t)name->args[0]->nat)))
+      return 0;
+    o->depth++;
+    if (!components_json(o, a, s, t->args[2]))
+      return 0;
+    o->depth--;
+    t = t->args[3];
+  }
+  return internal(o, "a missing tree node");
+}
+
+/* The manifest: the cells of init, the event keys, the component names and
+   the tree viewOf app init. The writer ends on the comma before instances. */
+static int manifest_json(Out *o, const AppInfo *a) {
+  Machine *m = o->m;
+  const Value *init;
+  const Value *events;
+  const Value *view_of;
+  const Value *app;
+  const Value *tree;
+  const Value *tree_type;
+  const Value *v;
+  Seen seen;
+  int first = 1;
+  memset(&seen, 0, sizeof seen);
+  o->def = "app";
+  init = app_value(m, a->init);
+  events = app_value(m, a->events);
+  view_of = app_value(m, a->view_of);
+  app = app_value(m, a->app);
+  m->def = "app";
+  m->fuel = EVAL_FUEL_STEPS;
+  m->depth = 0;
+  tree = apply_value(m, apply_value(m, view_of, app), init);
+  tree_type = val_make(m, OP_FAMILY, a->ui_tree, 0, NULL, NULL, NULL);
+  if (init == NULL || events == NULL || tree == NULL || tree_type == NULL || !put_text(o, "\"cells\":["))
+    return 0;
+  for (v = init; val_is(v, OP_CONS); v = v->args[1]) {
+    if (!cell_json(o, a, v->args[0], first))
+      return 0;
+    first = 0;
+  }
+  first = 1;
+  if (!put_text(o, "],\"events\":["))
+    return 0;
+  for (v = events; val_is(v, OP_CONS); v = v->args[1]) {
+    const Value *name = key_name(a, v->args[0]);
+    if (name == NULL)
+      return internal(o, "an event key that is not a Str");
+    if (!(first || put_text(o, ",")) || !put_bytes(o, name->name, (size_t)name->nat))
+      return 0;
+    first = 0;
+  }
+  return put_text(o, "],\"components\":[") && components_json(o, a, &seen, tree) && put_text(o, "],\"tree\":")
+    && value_json(o, tree_type, tree) && put_text(o, ",");
+}
+
 int json_document(Machine *m, const char **text, size_t *len) {
   Out o;
+  AppInfo a;
   char *type_text = arena_alloc(m->arena, JSON_TYPE_MAX);
   uint32_t i;
   int first = 1;
@@ -374,9 +656,12 @@ int json_document(Machine *m, const char **text, size_t *len) {
   o.m = m;
   if (type_text == NULL)
     return diag_fail(m->diag, "OOM", NULL, "the arena limit is reached");
-  ok = put_text(&o, "{") && put_string(&o, json_lang_name) && put_text(&o, ":1,\"instances\":[");
+  if (!json_app_info(m, &a))
+    return 0;
+  ok = put_text(&o, "{") && put_string(&o, json_lang_name) && put_text(&o, ":1,") && (!a.present || manifest_json(&o, &a))
+    && put_text(&o, "\"instances\":[");
   for (i = 0; ok && i < m->def_count; i++) {
-    if (json_is_instance(&m->defs[i])) {
+    if (json_is_instance(&m->defs[i]) && !(a.present && i == a.app)) {
       ok = instance_json(&o, i, type_text, first);
       first = 0;
     }

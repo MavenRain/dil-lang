@@ -1,0 +1,4 @@
+-- BUILD_APP: app with the type Nat, not Meaning.
+def init : State := cons (pair (key "seats") (vNat 2)) nil
+def events : List Key := cons (key "seats") nil
+def app : Nat := 1
